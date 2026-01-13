@@ -1,34 +1,61 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import log from 'spectra-log';
-import system from 'systeminformation';
+import { PrismaService } from './prisma.service.js';
+import os from 'os-utils';
 
 @Injectable()
-export class AppService {
+export class AppService implements OnApplicationBootstrap {
   constructor(
     private readonly configService: ConfigService,
-  ) { };
+    private readonly prismaService: PrismaService,
+
+  ) {
+    let a: number
+  }
+
+  async onApplicationBootstrap() {
+    const response = await fetch(
+      this.configService.get<string>('CENTRAL_SERVER_URL') +
+      '/server/initialize',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    const data = await response.json();
+    log(data);
+
+    await this.prismaService.agentInfo.upsert({
+      where: {
+        key: 'agent-code',
+      },
+      update: { value: data.data.connectionCode },
+      create: { key: 'agent-code', value: data.data.connectionCode },
+    });
+  }
+
+  async getConnectionCode() {
+    return await this.prismaService.agentInfo.findFirst({
+      where: {
+        key: 'agent-code',
+      }
+    });
+  }
 
   @Cron('* * * * * *')
   async heartbeat() {
     try {
-      const cpu = await system.cpuCurrentSpeed();
-      const memory = await system.mem();
-      const data = {
-        cpuUsage: cpu.avg,  
-        memTotal: Math.round(memory.total / 1024 / 1024),
-        memUsage: Math.round(memory.used / 1024 / 1024),
-        swapTotal: Math.round(memory.swaptotal / 1024 / 1024),
-        swapUsage: Math.round(memory.swapused / 1024 / 1024),
-      }
-      fetch(this.configService.get<string>('CENTRAL_SERVER_URL') + '/server/status/heartbeat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',  
-        },
-        body: JSON.stringify(data)
-      })
+      os.cpuUsage((usage) =>
+        log(
+`CPU Usage: ${(usage * 100).toString().split('.')[0] + '.' + (usage * 100).toString().split('.')[1].slice(0, 2)}%
+Memory Usage: ${Math.round(os.totalmem() - os.freemem())} MiB`
+        )
+      )
     } catch (error) {
       log(error, 500, 'ERROR');
     }

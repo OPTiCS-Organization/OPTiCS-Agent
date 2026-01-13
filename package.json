@@ -25,11 +25,15 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/schedule": "^6.1.0",
-    "better-sqlite3": "^12.5.0",
+    "@prisma/adapter-better-sqlite3": "^7.2.0",
+    "@prisma/client": "^7.2.0",
+    "@prisma/config": "^7.2.0",
+    "@types/os-utils": "^0.0.4",
+    "better-sqlite3": "^12.6.0",
+    "os-utils": "^0.0.14",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "spectra-log": "^2.0.0-b",
-    "systeminformation": "^5.27.14"
+    "spectra-log": "^2.0.0-b"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
