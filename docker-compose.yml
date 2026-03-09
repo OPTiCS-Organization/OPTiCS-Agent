@@ -1,0 +1,24 @@
+services:
+  optics-agent:
+    build: .
+    image: optics-agent
+    ports:
+      - "3001:3001"
+    volumes:
+      - "./data.db:/app/data.db"
+    networks:
+      - service-network
+    env_file: ./.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  optics-agent-dashboard:
+    build: ../OPTiCS-AGENT-DASHBOARD
+    image: optics-agent-dashboard
+    ports:
+      - "5173:80"
+    networks:
+      - service-network
+
+networks:
+  service-network: {}

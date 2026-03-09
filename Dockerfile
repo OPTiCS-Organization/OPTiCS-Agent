@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 COPY prisma/ ./
@@ -7,7 +7,7 @@ RUN npx prisma generate
 COPY . .
 RUN npm run build
 
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
