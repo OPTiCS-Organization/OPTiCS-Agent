@@ -21,16 +21,23 @@ model AgentInfo {
 
 model CpuUsage {
   idx       Int      @id @default(autoincrement())
-  timestamp DateTime @default(now())
-  maxUsage  Int
-  avgUsage  Int
-  minUsage  Int
+  timestamp BigInt   // Unix timestamp in milliseconds
+  peak      Float
+  average   Float
+  min       Float
+  createdAt DateTime @default(now())
+
+  @@index([timestamp])
 }
 
 model MemoryUsage {
-  idx       Int      @id @default(autoincrement())
-  timestamp DateTime @default(now())
-  maxUsage  Int
-  avgUsage  Int
-  minUsage  Int
+  idx         Int      @id @default(autoincrement())
+  timestamp   BigInt   // Unix timestamp in milliseconds
+  peak        Float    // MiB
+  average     Float    // MiB
+  min         Float    // MiB
+  totalMemory Float    // MiB
+  createdAt   DateTime @default(now())
+
+  @@index([timestamp])
 }
