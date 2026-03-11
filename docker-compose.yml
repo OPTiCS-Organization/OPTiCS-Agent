@@ -3,7 +3,7 @@ services:
     build: .
     image: optics-agent
     ports:
-      - "3001:3001"
+      - "${AGENT_PORT:-3001}:3001"
     volumes:
       - "./data.db:/app/data.db"
     networks:
@@ -16,7 +16,7 @@ services:
     build: ../OPTiCS-AGENT-DASHBOARD
     image: optics-agent-dashboard
     ports:
-      - "5173:80"
+      - "${DASHBOARD_PORT:-5173}:80"
     networks:
       - service-network
 
