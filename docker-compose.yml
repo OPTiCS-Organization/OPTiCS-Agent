@@ -13,7 +13,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   optics-agent-dashboard:
-    build: ../OPTiCS-AGENT-DASHBOARD
+    build: ../OPTiCS-Agent-Dashboard
     image: optics-agent-dashboard
     ports:
       - "${DASHBOARD_PORT:-5173}:80"
