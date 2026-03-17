@@ -34,8 +34,14 @@ export class AppService implements OnApplicationBootstrap {
       },
     );
 
+    interface InitializeResponse {
+      data: {
+        connectionCode: string;
+      };
+    }
+
     // should add dto,
-    const data = await response.json();
+    const data = (await response.json()) as InitializeResponse;
     log(data);
 
     await this.prismaService.agentInfo.upsert({
@@ -56,7 +62,7 @@ export class AppService implements OnApplicationBootstrap {
   }
 
   @Cron('* * * * * *')
-  async heartbeat() {
+  heartbeat() {
     try {
       os.cpuUsage((usage) =>
         this.updatePerformance(usage * 100, os.totalmem() - os.freemem()),
