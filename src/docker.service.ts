@@ -63,8 +63,7 @@ export class DockerService {
         || fs.existsSync(path.join(buildDir, 'docker-compose.yaml'));
 
       if (data.deployPreset === DeployOption.COMPOSE && !composeFileExists) {
-        log('docker-compose.yml or docker-compose.yaml Not Found. Deploy Process Aborted.\nPlease make sure docker-compose file is in the repository. or Try change Deploy Option to Dockerfile.', 400, "ERROR")
-        return 1;
+        throw new Error('docker-compose.yml not found. Change deploy option to DOCKERFILE or add docker-compose.yml to the repository.');
       }
 
       const hasCompose = data.deployPreset === DeployOption.COMPOSE
@@ -90,12 +89,13 @@ export class DockerService {
         }, { t: `${data.serviceName.toLowerCase()}:${data.serviceVersion}` });
 
         await new Promise((resolve, reject) => {
-          this.docker.modem.followProgress(stream, (err, res) => {
+          type BuildEvent = { stream?: string; error?: string };
+          this.docker.modem.followProgress(stream, (err: Error, res: BuildEvent[]) => {
             if (err) return reject(err);
-            const failed = res.find((r: any) => r.error);
+            const failed = res.find(r => r.error);
             if (failed) return reject(new Error(failed.error));
             resolve(res);
-          }, (event: any) => {
+          }, (event: BuildEvent) => {
             if (event.stream) log(event.stream.trim());
             if (event.error) log(`BUILD ERROR: ${event.error}`);
           });
