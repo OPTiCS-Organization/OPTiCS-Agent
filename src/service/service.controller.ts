@@ -8,8 +8,9 @@ export class ServiceController {
     private readonly serviceLifecycleService: ServiceLifecycleService,
   ) { }
 
-  @Post('deploy')
-  async deployService(@Body() request: DeployCommand) {
-    return await this.serviceLifecycleService.deployService(request);
+  @Post('v1/deploy')
+  async v1DeployService(@Body() request: DeployCommand) {
+    await this.serviceLifecycleService.v1DeployService(request);
+    return;
   }
 }
