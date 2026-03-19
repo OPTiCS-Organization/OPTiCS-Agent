@@ -25,7 +25,7 @@ export class AppService implements OnApplicationBootstrap {
   async onApplicationBootstrap() {
     const response = await fetch(
       this.configService.get<string>('CENTRAL_SERVER_URL') +
-        '/server/initialize',
+        '/v1/workspace/initialize',
       {
         method: 'POST',
         headers: {
