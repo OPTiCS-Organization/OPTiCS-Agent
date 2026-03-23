@@ -21,12 +21,15 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly notifyGateway: NotifyGateway,
   ) { }
 
-  onModuleInit() {
+  async onModuleInit() {
     const hubUrl = process.env.HUB_URL ?? 'http://localhost:3000';
+
+    const agentCodeRow = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-code' } });
 
     this.socket = io(`${hubUrl}/agent`, {
       reconnection: true,
       reconnectionDelay: 3000,
+      auth: { agentCode: agentCodeRow?.value ?? null },
     });
 
     this.socket.on('connect', () => {
