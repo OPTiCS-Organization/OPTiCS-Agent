@@ -49,7 +49,7 @@ export class NotifyService {
     });
     if (!agentCodeRow) throw new Error('Agent code not found.');
 
-    const hubUrl = this.configService.get<string>('CENTRAL_SERVER_URL');
+    const hubUrl = this.configService.get<string>('HUB_URL');
     const endpoint = accept ? 'accept' : 'reject';
 
     await fetch(`${hubUrl}/v1/agent/connect/${endpoint}`, {
