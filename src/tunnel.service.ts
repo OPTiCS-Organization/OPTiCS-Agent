@@ -6,6 +6,9 @@ import { RouteRequest } from './global/types/RouteRequest.dto';
 import { ServiceLifecycleService } from './service/service-lifecycle.service';
 import { COMMAND } from './global/Command.enum';
 import { PrismaService } from './share/prisma.service';
+import { NotifyService } from './notify/notify.service';
+import type { ConnectRequestPayload } from './notify/notify.service';
+import { NotifyGateway } from './notify/notify.gateway';
 
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
@@ -14,6 +17,8 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly serviceLifecycleService: ServiceLifecycleService,
     private readonly prismaService: PrismaService,
+    private readonly notifyService: NotifyService,
+    private readonly notifyGateway: NotifyGateway,
   ) { }
 
   onModuleInit() {
@@ -68,6 +73,12 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.socket.emit('response', response);
+    });
+
+    this.socket.on('connect-request', async (payload: ConnectRequestPayload) => {
+      await this.notifyService.savePendingRequest(payload);
+      this.notifyGateway.pushConnectRequest(payload);
+      log(`Connect Request Received from Hub.\n → Workspace: ${payload.workspaceName}`);
     });
 
     this.socket.on('reverse-proxy', async (payload: RouteRequest) => {

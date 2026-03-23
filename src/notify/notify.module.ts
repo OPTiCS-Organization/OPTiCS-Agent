@@ -9,6 +9,6 @@ import { ConfigService } from '@nestjs/config';
   imports: [SharedModule],
   controllers: [NotifyController],
   providers: [NotifyService, NotifyGateway, ConfigService],
-  exports: [NotifyService],
+  exports: [NotifyService, NotifyGateway],
 })
 export class NotifyModule {}
