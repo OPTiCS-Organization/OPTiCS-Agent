@@ -5,9 +5,9 @@ import path from "path";
 import fs from "fs";
 import { spawn } from "child_process";
 import log from "spectra-log";
-import { DeployCommand } from "./service/dtos/DeployCommand.dto";
-import { DeployOption } from "./service/enums/PresetMode.enum";
+import { DeployCommand } from "../service/dtos/DeployCommand.dto";
 import { GitService } from "./git.service";
+import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
 
 @Global()
 @Injectable()
@@ -62,12 +62,12 @@ export class DockerService {
       const composeFileExists = fs.existsSync(path.join(buildDir, 'docker-compose.yml'))
         || fs.existsSync(path.join(buildDir, 'docker-compose.yaml'));
 
-      if (data.deployPreset === DeployOption.COMPOSE && !composeFileExists) {
+      if (data.deployPreset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
         throw new Error('docker-compose.yml not found. Change deploy option to DOCKERFILE or add docker-compose.yml to the repository.');
       }
 
-      const hasCompose = data.deployPreset === DeployOption.COMPOSE
-        || (data.deployPreset !== DeployOption.DOCKERFILE && composeFileExists);
+      const hasCompose = data.deployPreset === DEPLOY_OPTION.COMPOSE
+        || (data.deployPreset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
 
       if (hasCompose) {
         log('Detected docker-compose, Starting build with Docker Compose...')
@@ -111,5 +111,4 @@ export class DockerService {
       log(error);
     }
   }
-
 }

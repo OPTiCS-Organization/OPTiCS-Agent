@@ -1,14 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ServiceLifecycleService } from './service-lifecycle.service';
-import { ServiceController } from './v1/service.controller';
-import { DockerService } from 'src/docker.service';
+import { ServiceController } from './service.controller';
 import { ConfigModule } from '@nestjs/config';
-import { GitService } from 'src/git.service';
+import { SharedModule } from 'src/share/shared.module';
 
 @Module({
-  imports: [ConfigModule],
-  providers: [ServiceLifecycleService, DockerService, GitService],
+  imports: [ConfigModule, SharedModule],
+  providers: [ServiceLifecycleService],
   controllers: [ServiceController],
+  exports: [ServiceLifecycleService],
 })
 
 export class ServiceModule { }

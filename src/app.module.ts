@@ -3,9 +3,10 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { PrismaService } from './prisma.service';
 import { InfoGateway } from './socket.gateway';
+import { TunnelService } from './tunnel.service';
 import { ServiceModule } from './service/service.module';
+import { SharedModule } from './share/shared.module';
 import { NotifyModule } from './notify/notify.module';
 
 @Module({
@@ -13,9 +14,10 @@ import { NotifyModule } from './notify/notify.module';
     ConfigModule.forRoot({ ignoreEnvFile: false }),
     ScheduleModule.forRoot(),
     ServiceModule,
+    SharedModule,
     NotifyModule,
   ],
   controllers: [AppController],
-  providers: [AppService, PrismaService, InfoGateway],
+  providers: [AppService, InfoGateway, TunnelService],
 })
 export class AppModule {}

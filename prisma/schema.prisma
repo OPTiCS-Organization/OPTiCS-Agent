@@ -19,9 +19,17 @@ model AgentInfo {
   updatedAt DateTime @updatedAt
 }
 
+model Services {
+  idx               Int           @id @default(autoincrement())
+  serviceName       String
+  servicePort       Int
+  serviceStatus     ServiceStatus
+  serviceLastOnline DateTime
+}
+
 model CpuUsage {
   idx       Int      @id @default(autoincrement())
-  timestamp BigInt   // Unix timestamp in milliseconds
+  timestamp BigInt // Unix timestamp in milliseconds
   peak      Float
   average   Float
   min       Float
@@ -32,12 +40,19 @@ model CpuUsage {
 
 model MemoryUsage {
   idx         Int      @id @default(autoincrement())
-  timestamp   BigInt   // Unix timestamp in milliseconds
-  peak        Float    // MiB
-  average     Float    // MiB
-  min         Float    // MiB
-  totalMemory Float    // MiB
+  timestamp   BigInt // Unix timestamp in milliseconds
+  peak        Float // MiB
+  average     Float // MiB
+  min         Float // MiB
+  totalMemory Float // MiB
   createdAt   DateTime @default(now())
 
   @@index([timestamp])
+}
+
+enum ServiceStatus {
+  Running
+  Stopped
+  Restart
+  Deleted
 }
