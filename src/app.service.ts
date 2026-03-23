@@ -1,13 +1,13 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import log from 'spectra-log';
-import { PrismaService } from './prisma.service.js';
+import { PrismaService } from './share/prisma.service.js';
 import { InfoGateway } from './socket.gateway.js';
 import os from 'os-utils';
 
 @Injectable()
-export class AppService implements OnApplicationBootstrap {
+export class AppService {
   private stack: number = 0;
   private cpuMax: number = 0;
   private cpuSum: number = 0;
@@ -21,37 +21,6 @@ export class AppService implements OnApplicationBootstrap {
     private readonly prismaService: PrismaService,
     private readonly infoGateway: InfoGateway,
   ) {}
-
-  async onApplicationBootstrap() {
-    const response = await fetch(
-      this.configService.get<string>('CENTRAL_SERVER_URL') +
-        '/server/initialize',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      },
-    );
-
-    interface InitializeResponse {
-      data: {
-        connectionCode: string;
-      };
-    }
-
-    // should add dto,
-    const data = (await response.json()) as InitializeResponse;
-    log(data);
-
-    await this.prismaService.agentInfo.upsert({
-      where: {
-        key: 'agent-code',
-      },
-      update: { value: data.data.connectionCode },
-      create: { key: 'agent-code', value: data.data.connectionCode },
-    });
-  }
 
   async getConnectionCode() {
     return await this.prismaService.agentInfo.findFirst({

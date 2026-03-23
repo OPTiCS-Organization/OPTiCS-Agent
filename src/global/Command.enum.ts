@@ -1,0 +1,8 @@
+export enum COMMAND {
+  DEPLOY = 'DEPLOY',
+  ABORT = 'ABORT',
+  START = 'START',
+  STOP = 'STOP',
+  DELETE = 'DELETE',
+  DISCONNECT = 'DISCONNECT'
+}

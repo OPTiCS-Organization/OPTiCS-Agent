@@ -4,9 +4,10 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Server } from 'socket.io';
 import { Injectable } from '@nestjs/common';
 import log from 'spectra-log';
+import { Socket } from 'socket.io-client';
 
 interface CpuData {
   timestamp: number;
@@ -25,11 +26,8 @@ interface MemoryData {
 
 @Injectable()
 @WebSocketGateway({
-  cors: {
-    origin: 'http://localhost:5173',
-    credentials: true,
-  },
   namespace: '/info',
+  cors: { origin: true, credentials: true },
 })
 export class InfoGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

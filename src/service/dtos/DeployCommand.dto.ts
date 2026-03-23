@@ -1,5 +1,5 @@
 import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
-import { DeployOption } from '../enums/PresetMode.enum';
+import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 
 export class DeployCommand {
   @IsString()
@@ -23,8 +23,8 @@ export class DeployCommand {
   servicePort: number;
 
   @IsNotEmpty()
-  @IsEnum(DeployOption)
-  deployPreset: DeployOption;
+  @IsEnum(DEPLOY_OPTION)
+  deployPreset: DEPLOY_OPTION;
 
   @IsOptional()
   env?: Record<string, string>;
