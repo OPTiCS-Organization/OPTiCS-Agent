@@ -6,6 +6,7 @@ export class Command {
   targetService: string;
   deployPreset: DEPLOY_OPTION;
 
+  serviceIndex: number;
   sourceUrl: string;
   serviceName: string;
   servicePort: number;

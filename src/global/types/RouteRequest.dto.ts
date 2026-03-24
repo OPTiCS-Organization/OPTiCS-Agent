@@ -17,5 +17,5 @@ export class RouteRequest {
   headers: Record<string, string>;
 
   @IsOptional()
-  body?: any;
+  body?: BodyInit | null;
 }

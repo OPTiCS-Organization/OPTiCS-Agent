@@ -4,6 +4,7 @@ import log from 'spectra-log';
 import { Command } from './global/types/Command.dto';
 import { RouteRequest } from './global/types/RouteRequest.dto';
 import { ServiceLifecycleService } from './service/service-lifecycle.service';
+import { ServiceGateway } from './service/service.gateway';
 import { COMMAND } from './global/Command.enum';
 import { PrismaService } from './share/prisma.service';
 import { NotifyService } from './notify/notify.service';
@@ -16,6 +17,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly serviceLifecycleService: ServiceLifecycleService,
+    private readonly serviceGateway: ServiceGateway,
     private readonly prismaService: PrismaService,
     private readonly notifyService: NotifyService,
     private readonly notifyGateway: NotifyGateway,
@@ -30,6 +32,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       reconnection: true,
       reconnectionDelay: 3000,
       auth: { agentCode: agentCodeRow?.value ?? null },
+    });
+
+    (this.serviceLifecycleService.registerHubEmit as (fn: (event: string, payload: object) => void) => void)((event, payload) => {
+      this.socket.emit(event, payload);
     });
 
     this.socket.on('connect', () => {
@@ -50,21 +56,86 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.socket.on('command', async (payload: Command) => {
-      log(`Command Received From Hub.\nCOMMAND: ${payload.command}`);
+      log(`[TunnelService] Command Received From Hub.\n → COMMAND: ${payload.command}`);
       let response = {};
 
       switch (payload.command) {
         case COMMAND.DEPLOY:
-          response = await this.serviceLifecycleService.v1DeployService({
-            apiKey: '',
-            deployPreset: payload.deployPreset,
-            serviceName: payload.serviceName,
-            servicePort: payload.servicePort,
-            sourceUrl: payload.sourceUrl,
-            serviceVersion: payload.serviceVersion,
-          });
+          log(`[TunnelService] DEPLOY | serviceIndex=${payload.serviceIndex} | name=${payload.serviceName} | preset=${payload.deployPreset}`);
+          response = await this.serviceLifecycleService.v1DeployService(
+            {
+              apiKey: '',
+              serviceIndex: payload.serviceIndex,
+              deployPreset: payload.deployPreset,
+              serviceName: payload.serviceName,
+              servicePort: payload.servicePort,
+              sourceUrl: payload.sourceUrl,
+              serviceVersion: payload.serviceVersion,
+              env: payload.env,
+            },
+            (event: string, emitPayload: unknown) => {
+              this.socket.emit(event, emitPayload);
+              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string };
+              const idx: number = p.serviceIndex;
+              if (event === 'service-status' && typeof p.status === 'string') {
+                const status: string = p.status;
+                log(`[TunnelService] emit service-status | serviceIndex=${idx} | status=${status}`);
+                this.serviceGateway.pushStatus(idx, status);
+                void this.serviceLifecycleService.updateServiceStatus(idx, status).catch((e: unknown) => log(e));
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                log(`[TunnelService] emit service-log  | serviceIndex=${idx} | ${p.log}`);
+                this.serviceGateway.pushLog(idx, p.log, p.timestamp ?? new Date().toISOString());
+              }
+            },
+          );
+          break;
+        case COMMAND.START:
+          log(`[TunnelService] START | serviceIndex=${payload.serviceIndex} | name=${payload.serviceName}`);
+          await this.serviceLifecycleService.v1StartService(
+            payload.serviceName,
+            (event: string, emitPayload: unknown) => {
+              this.socket.emit(event, emitPayload);
+              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              if (event === 'service-status' && typeof p.status === 'string') {
+                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
+                void service.then((s) => {
+                  if (!s) return;
+                  this.serviceGateway.pushStatus(s.idx, p.status!);
+                  void this.serviceLifecycleService.updateServiceStatus(s.idx, p.status!);
+                });
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
+                void service.then((s) => {
+                  if (!s) return;
+                  this.serviceGateway.pushLog(s.idx, p.log!, p.timestamp ?? new Date().toISOString());
+                });
+              }
+            },
+          );
           break;
         case COMMAND.STOP:
+          log(`[TunnelService] STOP | serviceIndex=${payload.serviceIndex} | name=${payload.serviceName}`);
+          await this.serviceLifecycleService.v1StopService(
+            payload.serviceName,
+            (event: string, emitPayload: unknown) => {
+              this.socket.emit(event, emitPayload);
+              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              if (event === 'service-status' && typeof p.status === 'string') {
+                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
+                void service.then((s) => {
+                  if (!s) return;
+                  this.serviceGateway.pushStatus(s.idx, p.status!);
+                  void this.serviceLifecycleService.updateServiceStatus(s.idx, p.status!);
+                });
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
+                void service.then((s) => {
+                  if (!s) return;
+                  this.serviceGateway.pushLog(s.idx, p.log!, p.timestamp ?? new Date().toISOString());
+                });
+              }
+            },
+          );
           break;
         case COMMAND.ABORT:
           break;
@@ -73,6 +144,23 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
         case COMMAND.DISCONNECT:
           this.socket.disconnect();
           break;
+        case COMMAND.STREAM_LOG: {
+          const streamIdx: number = Number(payload.serviceIndex);
+          const streamName: string = String(payload.serviceName);
+          log(`[TunnelService] STREAM_LOG | serviceIndex=${streamIdx} | name=${streamName}`);
+          await this.serviceLifecycleService.streamServiceLog(
+            streamIdx,
+            streamName,
+            (line: string) => this.socket.emit('service-log', { serviceIndex: streamIdx, log: line, timestamp: new Date().toISOString() }),
+          );
+          break;
+        }
+        case COMMAND.STOP_LOG: {
+          const stopName: string = String(payload.serviceName);
+          log(`[TunnelService] STOP_LOG | name=${stopName}`);
+          this.serviceLifecycleService.stopServiceLog(stopName);
+          break;
+        }
       }
 
       this.socket.emit('response', response);

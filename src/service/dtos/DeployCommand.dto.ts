@@ -2,6 +2,10 @@ import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-valida
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 
 export class DeployCommand {
+  @IsNumber()
+  @IsNotEmpty()
+  serviceIndex: number;
+
   @IsString()
   @IsNotEmpty()
   sourceUrl: string;

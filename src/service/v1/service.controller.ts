@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { DeployCommand } from '../dtos/DeployCommand.dto';
 import { ServiceLifecycleService } from '../service-lifecycle.service';
 
@@ -8,9 +8,14 @@ export class ServiceController {
     private readonly serviceLifecycleService: ServiceLifecycleService,
   ) { }
 
+  @Get()
+  async v1GetServiceList() {
+    return this.serviceLifecycleService.getServiceList();
+  }
+
   @Post('deploy')
   async v1DeployService(@Body() request: DeployCommand) {
-    await this.serviceLifecycleService.v1DeployService(request);
+    await this.serviceLifecycleService.v1DeployService(request, () => {});
     return;
   }
 }
