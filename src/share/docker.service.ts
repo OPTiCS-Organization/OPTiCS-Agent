@@ -126,6 +126,35 @@ export class DockerService implements OnModuleInit {
     });
   }
 
+  private repoName(url: string): string {
+    return url.split('/').pop()?.replace(/\.git$/, '') ?? 'repo';
+  }
+
+  private async cloneAll(
+    sourceUrl: string | string[],
+    baseDir: string,
+    sendLog: (line: string) => void,
+  ): Promise<string> {
+    const urls = Array.isArray(sourceUrl) ? sourceUrl : [sourceUrl];
+
+    if (urls.length === 1) {
+      // 단일 URL: baseDir에 바로 클론
+      sendLog(`Cloning from '${urls[0]}'...`);
+      await this.gitService.clone(urls[0], baseDir);
+      sendLog('Clone done.');
+      return baseDir;
+    }
+
+    // 복수 URL: baseDir/{repoName}/ 에 각각 클론, 첫 번째가 메인
+    for (const url of urls) {
+      const repoDir = path.join(baseDir, this.repoName(url));
+      sendLog(`Cloning '${url}' → ${this.repoName(url)}/...`);
+      await this.gitService.clone(url, repoDir);
+    }
+    sendLog('All repositories cloned.');
+    return path.join(baseDir, this.repoName(urls[0]));
+  }
+
   // 컨테이너 이름을 받아 시작 하는 함수
   async runService(serviceName: string, serviceVersion: string, servicePort: number, env?: Record<string, string>) {
     const container = await this.docker.createContainer({
@@ -284,11 +313,7 @@ export class DockerService implements OnModuleInit {
       // 기존 빌드 디렉토리 제거
       fs.rmSync(path.join(__dirname, '../build', name), { recursive: true, force: true });
 
-      sendLog(`Cloning from '${data.sourceUrl}'...`);
-      await this.gitService.clone(data.sourceUrl, path.join(__dirname, `../build`, name));
-      sendLog('Clone done.');
-
-      const buildDir = path.join(__dirname, '../build', name);
+      const buildDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', name), sendLog);
       fs.chmodSync(buildDir, 0o755);
       fs.readdirSync(buildDir).forEach(file => {
         try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip */ }
@@ -362,11 +387,7 @@ export class DockerService implements OnModuleInit {
     try {
       sendStatus('building');
       sendLog(`Creating new Service '${data.serviceName.toLowerCase()}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
-      sendLog(`Cloning from '${data.sourceUrl}'...`);
-      await this.gitService.clone(data.sourceUrl, path.join(__dirname, `../build`, data.serviceName.toLowerCase()));
-      sendLog('Clone done.');
-
-      const buildDir = path.join(__dirname, "../build", data.serviceName.toLowerCase());
+      const buildDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', data.serviceName.toLowerCase()), sendLog);
       fs.chmodSync(buildDir, 0o755);
       fs.readdirSync(buildDir).forEach(file => {
         try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip non-chmodable */ }

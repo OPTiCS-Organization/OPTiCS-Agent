@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 
 export class DeployCommand {
@@ -6,9 +6,8 @@ export class DeployCommand {
   @IsNotEmpty()
   serviceIndex: number;
 
-  @IsString()
   @IsNotEmpty()
-  sourceUrl: string;
+  sourceUrl: string | string[];
 
   @IsOptional()
   @IsString()
