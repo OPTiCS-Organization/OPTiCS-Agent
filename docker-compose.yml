@@ -6,6 +6,7 @@ services:
       - "${AGENT_PORT:-5230}:5230"
     volumes:
       - "./data.db:/app/data.db"
+      - "/var/run/docker.sock:/var/run/docker.sock"
     networks:
       - service-network
     env_file: ./.env

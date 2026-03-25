@@ -109,7 +109,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
     await this.dockerService.deleteService(serviceName, deployPreset, emit);
-    await this.prismaService.services.delete({ where: { idx: serviceIndex } });
+    await this.prismaService.services.deleteMany({ where: { idx: serviceIndex } });
   }
 
   async v1RedeployService(
