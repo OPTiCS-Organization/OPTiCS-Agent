@@ -120,6 +120,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           log(`[TunnelService] START | serviceIndex=${startIdx} | name=${payload.serviceName}`);
           await this.serviceLifecycleService.v1StartService(
             payload.serviceName,
+            payload.deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -139,6 +140,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           log(`[TunnelService] STOP | serviceIndex=${stopIdx} | name=${payload.serviceName}`);
           await this.serviceLifecycleService.v1StopService(
             payload.serviceName,
+            payload.deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -161,6 +163,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           await this.serviceLifecycleService.v1DeleteService(
             payload.serviceName,
             deleteIdx,
+            payload.deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -184,6 +187,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           await this.serviceLifecycleService.streamServiceLog(
             streamIdx,
             streamName,
+            payload.deployPreset,
             (line: string) => this.socket.emit('service-log', { serviceIndex: streamIdx, log: line, timestamp: new Date().toISOString() }),
           );
           break;

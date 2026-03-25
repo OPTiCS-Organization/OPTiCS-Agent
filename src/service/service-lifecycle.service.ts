@@ -3,6 +3,7 @@ import { DeployCommand } from './dtos/DeployCommand.dto';
 import { DockerService } from 'src/share/docker.service';
 import { RouteRequest } from 'src/global/types/RouteRequest.dto';
 import { PrismaService } from 'src/share/prisma.service';
+import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 import log from 'spectra-log';
 
 type HubEmit = (event: 'service-status' | 'service-log', payload: object) => void;
@@ -27,9 +28,12 @@ export class ServiceLifecycleService implements OnModuleInit {
       const status = raw.slice(0, colonIdx);
       const containerName = raw.slice(colonIdx + 1);
 
-      const service = await this.prismaService.services.findFirst({
-        where: { serviceName: containerName },
-      });
+      // Compose 컨테이너명({project}-{svc}-{n}) → 프로젝트명(serviceName)으로 역매핑
+      const services = await this.prismaService.services.findMany();
+      const service = services.find(s =>
+        containerName === s.serviceName.toLowerCase() ||
+        containerName.startsWith(`${s.serviceName.toLowerCase()}-`)
+      );
       if (!service) return;
 
       log(`[ServiceLifecycleService] container stopped | name=${containerName} | status=${status} | idx=${service.idx}`);
@@ -89,9 +93,9 @@ export class ServiceLifecycleService implements OnModuleInit {
     });
   }
 
-  async streamServiceLog(serviceIndex: number, serviceName: string, onLog: (line: string) => void): Promise<void> {
+  async streamServiceLog(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, onLog: (line: string) => void): Promise<void> {
     log(`[ServiceLifecycleService] streamServiceLog | serviceIndex=${serviceIndex} | name=${serviceName}`);
-    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), onLog);
+    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog);
   }
 
   stopServiceLog(serviceName: string): void {
@@ -101,9 +105,10 @@ export class ServiceLifecycleService implements OnModuleInit {
   async v1DeleteService(
     serviceName: string,
     serviceIndex: number,
+    deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.deleteService(serviceName, emit);
+    await this.dockerService.deleteService(serviceName, deployPreset, emit);
     await this.prismaService.services.delete({ where: { idx: serviceIndex } });
   }
 
@@ -125,15 +130,17 @@ export class ServiceLifecycleService implements OnModuleInit {
 
   async v1StartService(
     serviceName: string,
+    deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.restartService(serviceName, emit);
+    await this.dockerService.restartService(serviceName, deployPreset, emit);
   }
 
   async v1StopService(
     serviceName: string,
+    deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.stopService(serviceName, emit);
+    await this.dockerService.stopService(serviceName, deployPreset, emit);
   }
 }

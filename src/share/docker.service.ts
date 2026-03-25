@@ -37,26 +37,38 @@ export class DockerService implements OnModuleInit {
 
   async streamContainerLog(
     containerName: string,
+    deployPreset: DEPLOY_OPTION,
     onLog: (line: string) => void,
   ): Promise<void> {
     if (this.logStreams.has(containerName)) return;
-    try {
-      const container = this.docker.getContainer(containerName);
-      const info = await container.inspect() as { State: { StartedAt: string } };
-      const since = Math.floor(new Date(info.State.StartedAt).getTime() / 1000);
-      const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000, since }) as unknown as import('stream').Readable;
-      this.logStreams.set(containerName, stream);
-      stream.on('data', (chunk: Buffer) => {
-        // Docker multiplexed stream: 첫 8바이트는 헤더
-        const raw = chunk.length > 8 ? chunk.subarray(8).toString('utf8') : chunk.toString('utf8');
-        raw.split('\n').filter(l => l.trim()).forEach(line => onLog(line));
+
+    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
+
+    if (isCompose) {
+      // Compose: docker compose -p {name} logs --follow --tail 10000
+      const proc = spawn('docker', ['compose', '-p', containerName, 'logs', '--follow', '--tail', '10000'], {});
+      this.logStreams.set(containerName, proc.stdout as unknown as import('stream').Readable);
+      proc.stdout.on('data', (chunk: Buffer) => {
+        chunk.toString('utf8').split('\n').filter(l => l.trim()).forEach(line => onLog(line));
       });
-      stream.on('end', () => {
-        this.logStreams.delete(containerName);
-      });
-      log(`[DockerService] streamContainerLog started | name=${containerName}`);
-    } catch (e) {
-      log(`[DockerService] streamContainerLog failed | name=${containerName} | ${String(e)}`);
+      proc.on('close', () => { this.logStreams.delete(containerName); });
+      log(`[DockerService] streamContainerLog (compose) started | project=${containerName}`);
+    } else {
+      try {
+        const container = this.docker.getContainer(containerName);
+        const info = await container.inspect() as { State: { StartedAt: string } };
+        const since = Math.floor(new Date(info.State.StartedAt).getTime() / 1000);
+        const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000, since }) as unknown as import('stream').Readable;
+        this.logStreams.set(containerName, stream);
+        stream.on('data', (chunk: Buffer) => {
+          const raw = chunk.length > 8 ? chunk.subarray(8).toString('utf8') : chunk.toString('utf8');
+          raw.split('\n').filter(l => l.trim()).forEach(line => onLog(line));
+        });
+        stream.on('end', () => { this.logStreams.delete(containerName); });
+        log(`[DockerService] streamContainerLog started | name=${containerName}`);
+      } catch (e) {
+        log(`[DockerService] streamContainerLog failed | name=${containerName} | ${String(e)}`);
+      }
     }
   }
 
@@ -135,18 +147,27 @@ export class DockerService implements OnModuleInit {
 
   async stopService(
     serviceName: string,
+    deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
     const si = serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
-      sendLog(`Stopping container '${si}'...`);
-      const container = this.docker.getContainer(si);
-      await container.stop();
+      sendLog(`Stopping service '${si}'...`);
+      if (isCompose) {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', '-p', si, 'stop']);
+          proc.stderr.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose stop exited with code ${code}`)));
+        });
+      } else {
+        await this.docker.getContainer(si).stop();
+      }
       sendStatus('stopped');
-      sendLog(`Container '${si}' stopped successfully.`);
+      sendLog(`Service '${si}' stopped successfully.`);
       log(`[DockerService] stopService success | name=${si}`);
     } catch (e) {
       sendStatus('failed');
@@ -157,20 +178,28 @@ export class DockerService implements OnModuleInit {
 
   async restartService(
     serviceName: string,
+    deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    log(serviceName)
     const si = serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
       sendStatus('restarting');
-      sendLog(`Restarting container '${si}'...`);
-      const container = this.docker.getContainer(si);
-      await container.restart();
+      sendLog(`Restarting service '${si}'...`);
+      if (isCompose) {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', '-p', si, 'restart']);
+          proc.stderr.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose restart exited with code ${code}`)));
+        });
+      } else {
+        await this.docker.getContainer(si).restart();
+      }
       sendStatus('running');
-      sendLog(`Container '${si}' restarted successfully.`);
+      sendLog(`Service '${si}' restarted successfully.`);
       log(`[DockerService] restartService success | name=${si}`);
     } catch (e) {
       sendStatus('failed');
@@ -181,35 +210,43 @@ export class DockerService implements OnModuleInit {
 
   async deleteService(
     serviceName: string,
+    deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
     const si = serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
       sendLog(`Deleting service '${si}'...`);
-      const container = this.docker.getContainer(si);
-      const info = await container.inspect() as { State: { Running: boolean } };
-      if (info.State.Running) {
-        sendLog(`Stopping container '${si}'...`);
-        await container.stop();
+      if (isCompose) {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', '-p', si, 'down', '--rmi', 'all', '--volumes']);
+          proc.stdout.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.stderr.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose down exited with code ${code}`)));
+        });
+      } else {
+        const container = this.docker.getContainer(si);
+        const info = await container.inspect() as { State: { Running: boolean } };
+        if (info.State.Running) {
+          sendLog(`Stopping container '${si}'...`);
+          await container.stop();
+        }
+        await container.remove();
+        sendLog(`Container '${si}' removed.`);
+        try {
+          await this.docker.getImage(si).remove();
+          sendLog(`Image '${si}' removed.`);
+        } catch {
+          sendLog(`No image found for '${si}', skipping.`);
+        }
       }
-      await container.remove();
-      sendLog(`Container '${si}' removed.`);
-      log(`[DockerService] deleteService success | name=${si}`);
-
-      try {
-        const image = this.docker.getImage(si);
-        await image.remove();
-        sendLog(`Image '${si}' removed.`);
-      } catch {
-        sendLog(`No image found for '${si}', skipping.`);
-      }
-
       fs.rmSync(path.join(__dirname, '../build', si), { recursive: true, force: true });
       sendStatus('removed');
       sendLog(`Service '${si}' deleted successfully.`);
+      log(`[DockerService] deleteService success | name=${si}`);
     } catch (e) {
       sendStatus('failed');
       sendLog(`ERROR: ${String(e)}`);
@@ -274,7 +311,7 @@ export class DockerService implements OnModuleInit {
           fs.writeFileSync(path.join(buildDir, '.env'), envContent);
         }
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', 'up', '-d', '--build'], { cwd: buildDir });
+          const proc = spawn('docker', ['compose', '-p', name ?? data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir });
           proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
           proc.stderr.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
@@ -352,7 +389,7 @@ export class DockerService implements OnModuleInit {
           fs.writeFileSync(path.join(buildDir, '.env'), envContent);
         }
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', 'up', '-d', '--build'], { cwd: buildDir });
+          const proc = spawn('docker', ['compose', '-p', data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir });
           proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
           proc.stderr.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
