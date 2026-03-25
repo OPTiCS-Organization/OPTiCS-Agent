@@ -155,8 +155,25 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
         }
         case COMMAND.ABORT:
           break;
-        case COMMAND.DELETE:
+        case COMMAND.DELETE: {
+          const deleteIdx = Number(payload.serviceIndex);
+          log(`[TunnelService] DELETE | serviceIndex=${deleteIdx} | name=${payload.serviceName}`);
+          await this.serviceLifecycleService.v1DeleteService(
+            payload.serviceName,
+            deleteIdx,
+            (event: string, emitPayload: unknown) => {
+              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              if (event === 'service-status' && typeof p.status === 'string') {
+                this.socket.emit(event, { serviceIndex: deleteIdx, status: p.status });
+                this.serviceGateway.pushStatus(deleteIdx, p.status);
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                this.socket.emit(event, { serviceIndex: deleteIdx, log: p.log, timestamp: p.timestamp ?? new Date().toISOString() });
+                this.serviceGateway.pushLog(deleteIdx, p.log, p.timestamp ?? new Date().toISOString());
+              }
+            },
+          );
           break;
+        }
         case COMMAND.DISCONNECT:
           this.socket.disconnect();
           break;

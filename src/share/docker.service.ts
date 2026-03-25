@@ -179,6 +179,44 @@ export class DockerService implements OnModuleInit {
     }
   }
 
+  async deleteService(
+    serviceName: string,
+    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+  ) {
+    const si = serviceName.toLowerCase();
+    const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
+    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+
+    try {
+      sendLog(`Deleting service '${si}'...`);
+      const container = this.docker.getContainer(si);
+      const info = await container.inspect() as { State: { Running: boolean } };
+      if (info.State.Running) {
+        sendLog(`Stopping container '${si}'...`);
+        await container.stop();
+      }
+      await container.remove();
+      sendLog(`Container '${si}' removed.`);
+      log(`[DockerService] deleteService success | name=${si}`);
+
+      try {
+        const image = this.docker.getImage(si);
+        await image.remove();
+        sendLog(`Image '${si}' removed.`);
+      } catch {
+        sendLog(`No image found for '${si}', skipping.`);
+      }
+
+      fs.rmSync(path.join(__dirname, '../build', si), { recursive: true, force: true });
+      sendStatus('removed');
+      sendLog(`Service '${si}' deleted successfully.`);
+    } catch (e) {
+      sendStatus('failed');
+      sendLog(`ERROR: ${String(e)}`);
+      log(`[DockerService] deleteService failed | name=${si} | ${String(e)}`);
+    }
+  }
+
   async redeployService(
     data: DeployCommand,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
