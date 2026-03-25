@@ -37,12 +37,15 @@ export class ServiceLifecycleService implements OnModuleInit {
       const statusMap: Record<string, 'Running' | 'Stopped' | 'Restart' | 'Deleted' | 'Removed'> = {
         running: 'Running', stopped: 'Stopped', failed: 'Stopped', restarting: 'Restart', removed: 'Removed',
       };
+      const mappedStatus = statusMap[status] ?? 'Stopped';
       await this.prismaService.services.update({
         where: { idx: service.idx },
-        data: { serviceStatus: statusMap[status] ?? 'Stopped', serviceLastOnline: new Date() },
+        data: { serviceStatus: mappedStatus, serviceLastOnline: new Date() },
       });
 
-      this.hubEmit?.('service-status', { serviceIndex: service.idx, status });
+      if (mappedStatus !== 'Restart') {
+        this.hubEmit?.('service-status', { serviceIndex: service.idx, status: mappedStatus.toLowerCase() });
+      }
     });
   }
 
@@ -93,6 +96,14 @@ export class ServiceLifecycleService implements OnModuleInit {
 
   stopServiceLog(serviceName: string): void {
     this.dockerService.stopContainerLog(serviceName.toLowerCase());
+  }
+
+  async v1RedeployService(
+    request: DeployCommand,
+    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+  ) {
+    await this.dockerService.redeployService(request, emit);
+    return request;
   }
 
   async v1DeployService(

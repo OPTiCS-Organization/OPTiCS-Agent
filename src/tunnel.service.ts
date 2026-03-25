@@ -89,54 +89,70 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             },
           );
           break;
-        case COMMAND.START:
-          log(`[TunnelService] START | serviceIndex=${payload.serviceIndex} | name=${payload.serviceName}`);
+        case COMMAND.REDEPLOY:
+          log(`[TunnelService] REDEPLOY | serviceIndex=${payload.serviceIndex} | name=${payload.serviceName}`);
+          response = await this.serviceLifecycleService.v1RedeployService(
+            {
+              apiKey: '',
+              serviceIndex: payload.serviceIndex,
+              deployPreset: payload.deployPreset,
+              serviceName: payload.serviceName,
+              servicePort: payload.servicePort,
+              sourceUrl: payload.sourceUrl,
+              serviceVersion: payload.serviceVersion,
+              env: payload.env,
+            },
+            (event: string, emitPayload: unknown) => {
+              this.socket.emit(event, emitPayload);
+              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string };
+              const idx: number = p.serviceIndex;
+              if (event === 'service-status' && typeof p.status === 'string') {
+                this.serviceGateway.pushStatus(idx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(idx, p.status).catch((e: unknown) => log(e));
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                this.serviceGateway.pushLog(idx, p.log, p.timestamp ?? new Date().toISOString());
+              }
+            },
+          );
+          break;
+        case COMMAND.START: {
+          const startIdx = Number(payload.serviceIndex);
+          log(`[TunnelService] START | serviceIndex=${startIdx} | name=${payload.serviceName}`);
           await this.serviceLifecycleService.v1StartService(
             payload.serviceName,
             (event: string, emitPayload: unknown) => {
-              this.socket.emit(event, emitPayload);
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
-                void service.then((s) => {
-                  if (!s) return;
-                  this.serviceGateway.pushStatus(s.idx, p.status!);
-                  void this.serviceLifecycleService.updateServiceStatus(s.idx, p.status!);
-                });
+                this.socket.emit(event, { serviceIndex: startIdx, status: p.status });
+                this.serviceGateway.pushStatus(startIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(startIdx, p.status);
               } else if (event === 'service-log' && typeof p.log === 'string') {
-                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
-                void service.then((s) => {
-                  if (!s) return;
-                  this.serviceGateway.pushLog(s.idx, p.log!, p.timestamp ?? new Date().toISOString());
-                });
+                this.socket.emit(event, { serviceIndex: startIdx, log: p.log, timestamp: p.timestamp ?? new Date().toISOString() });
+                this.serviceGateway.pushLog(startIdx, p.log, p.timestamp ?? new Date().toISOString());
               }
             },
           );
           break;
-        case COMMAND.STOP:
-          log(`[TunnelService] STOP | serviceIndex=${payload.serviceIndex} | name=${payload.serviceName}`);
+        }
+        case COMMAND.STOP: {
+          const stopIdx = Number(payload.serviceIndex);
+          log(`[TunnelService] STOP | serviceIndex=${stopIdx} | name=${payload.serviceName}`);
           await this.serviceLifecycleService.v1StopService(
             payload.serviceName,
             (event: string, emitPayload: unknown) => {
-              this.socket.emit(event, emitPayload);
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
-                void service.then((s) => {
-                  if (!s) return;
-                  this.serviceGateway.pushStatus(s.idx, p.status!);
-                  void this.serviceLifecycleService.updateServiceStatus(s.idx, p.status!);
-                });
+                this.socket.emit(event, { serviceIndex: stopIdx, status: p.status });
+                this.serviceGateway.pushStatus(stopIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(stopIdx, p.status);
               } else if (event === 'service-log' && typeof p.log === 'string') {
-                const service = this.prismaService.services.findFirst({ where: { serviceName: p.serviceName } });
-                void service.then((s) => {
-                  if (!s) return;
-                  this.serviceGateway.pushLog(s.idx, p.log!, p.timestamp ?? new Date().toISOString());
-                });
+                this.socket.emit(event, { serviceIndex: stopIdx, log: p.log, timestamp: p.timestamp ?? new Date().toISOString() });
+                this.serviceGateway.pushLog(stopIdx, p.log, p.timestamp ?? new Date().toISOString());
               }
             },
           );
           break;
+        }
         case COMMAND.ABORT:
           break;
         case COMMAND.DELETE:

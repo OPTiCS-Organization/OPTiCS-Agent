@@ -1,5 +1,6 @@
 export enum COMMAND {
   DEPLOY = 'DEPLOY',
+  REDEPLOY = 'REDEPLOY',
   ABORT = 'ABORT',
   START = 'START',
   STOP = 'STOP',

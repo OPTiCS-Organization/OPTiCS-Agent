@@ -42,7 +42,9 @@ export class DockerService implements OnModuleInit {
     if (this.logStreams.has(containerName)) return;
     try {
       const container = this.docker.getContainer(containerName);
-      const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 100 }) as import('stream').Readable;
+      const info = await container.inspect() as { State: { StartedAt: string } };
+      const since = Math.floor(new Date(info.State.StartedAt).getTime() / 1000);
+      const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000, since }) as unknown as import('stream').Readable;
       this.logStreams.set(containerName, stream);
       stream.on('data', (chunk: Buffer) => {
         // Docker multiplexed stream: 첫 8바이트는 헤더
@@ -140,10 +142,10 @@ export class DockerService implements OnModuleInit {
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
 
     try {
-      sendStatus('stopping');
       sendLog(`Stopping container '${si}'...`);
       const container = this.docker.getContainer(si);
       await container.stop();
+      sendStatus('stopped');
       sendLog(`Container '${si}' stopped successfully.`);
       log(`[DockerService] stopService success | name=${si}`);
     } catch (e) {
@@ -167,12 +169,109 @@ export class DockerService implements OnModuleInit {
       sendLog(`Restarting container '${si}'...`);
       const container = this.docker.getContainer(si);
       await container.restart();
+      sendStatus('running');
       sendLog(`Container '${si}' restarted successfully.`);
       log(`[DockerService] restartService success | name=${si}`);
     } catch (e) {
       sendStatus('failed');
       sendLog(`ERROR: ${String(e)}`);
       log(`[DockerService] restartService failed | name=${si} | ${String(e)}`);
+    }
+  }
+
+  async redeployService(
+    data: DeployCommand,
+    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+  ) {
+    const si: number = Number(data.serviceIndex);
+    const sendLog = (line: string) => emit('service-log', { serviceIndex: si, log: line, timestamp: new Date().toISOString() });
+    const sendStatus = (status: string) => emit('service-status', { serviceIndex: si, status });
+    const name = data.serviceName.toLowerCase();
+
+    try {
+      sendStatus('building');
+      sendLog(`Redeploying service '${name}@${data.serviceVersion}'...`);
+
+      // 기존 컨테이너 중지 및 제거
+      try {
+        const existing = this.docker.getContainer(name);
+        const info = await existing.inspect() as { State: { Running: boolean } };
+        if (info.State.Running) {
+          sendLog(`Stopping existing container '${name}'...`);
+          await existing.stop();
+        }
+        sendLog(`Removing existing container '${name}'...`);
+        await existing.remove();
+      } catch {
+        sendLog(`No existing container found, proceeding with fresh deploy.`);
+      }
+
+      // 기존 빌드 디렉토리 제거
+      fs.rmSync(path.join(__dirname, '../build', name), { recursive: true, force: true });
+
+      sendLog(`Cloning from '${data.sourceUrl}'...`);
+      await this.gitService.clone(data.sourceUrl, path.join(__dirname, `../build`, name));
+      sendLog('Clone done.');
+
+      const buildDir = path.join(__dirname, '../build', name);
+      fs.chmodSync(buildDir, 0o755);
+      fs.readdirSync(buildDir).forEach(file => {
+        try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip */ }
+      });
+
+      const composeFileExists = fs.existsSync(path.join(buildDir, 'docker-compose.yml'))
+        || fs.existsSync(path.join(buildDir, 'docker-compose.yaml'));
+
+      if (data.deployPreset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
+        throw new Error('docker-compose.yml not found.');
+      }
+
+      const hasCompose = data.deployPreset === DEPLOY_OPTION.COMPOSE
+        || (data.deployPreset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
+
+      if (hasCompose) {
+        sendLog('Detected docker-compose, starting build...');
+        if (data.env) {
+          const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
+          fs.writeFileSync(path.join(buildDir, '.env'), envContent);
+        }
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', 'up', '-d', '--build'], { cwd: buildDir });
+          proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
+          proc.stderr.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
+        });
+      } else {
+        sendLog('Detected Dockerfile, starting build...');
+        const stream = await this.docker.buildImage({
+          context: buildDir,
+          src: fs.readdirSync(buildDir),
+        }, { t: `${name}:${data.serviceVersion}` });
+
+        await new Promise((resolve, reject) => {
+          type BuildEvent = { stream?: string; error?: string };
+          this.docker.modem.followProgress(stream, (err: Error | null, res: BuildEvent[]) => {
+            if (err) return reject(err);
+            const failed = res.find(r => r.error);
+            if (failed) return reject(new Error(failed.error ?? 'Build failed'));
+            resolve(res);
+          }, (event: BuildEvent) => {
+            if (event.stream) { const line = event.stream.trim(); log(line); sendLog(line); }
+            if (event.error) { log(`BUILD ERROR: ${event.error}`); sendLog(`BUILD ERROR: ${event.error}`); }
+          });
+        });
+        sendLog('Build done. Starting container...');
+        await this.runService(data.serviceName, data.serviceVersion, data.servicePort, data.env);
+      }
+
+      sendStatus('running');
+      sendLog('Service redeployed successfully.');
+      log('Redeploy success.');
+    } catch (error) {
+      fs.rmSync(path.join(__dirname, '../build', name), { recursive: true, force: true });
+      sendStatus('failed');
+      sendLog(`ERROR: ${String(error)}`);
+      log(error);
     }
   }
 
