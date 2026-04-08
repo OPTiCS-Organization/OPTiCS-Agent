@@ -26,12 +26,15 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     const hubUrl = process.env.HUB_URL ?? 'http://localhost:3000';
 
-    const agentCodeRow = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-code' } });
+    const agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } })
+    if (agentUuid) {
+      log(`UUID Found!: ${agentUuid.value}`)
+    }
 
     this.socket = io(`${hubUrl}/agent`, {
       reconnection: true,
       reconnectionDelay: 3000,
-      auth: { agentCode: agentCodeRow?.value ?? null },
+      auth: { agentUuid: agentUuid?.key ?? null },
     });
 
     (this.serviceLifecycleService.registerHubEmit as (fn: (event: string, payload: object) => void) => void)((event, payload) => {
@@ -40,16 +43,24 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
     this.socket.on('connect', () => {
       log(`{{ green : bold : Socket Connection Established with Hub. }}\n {{ dim : bold : → Socket ID: ${this.socket.id} }}`);
+      this.socket.emit('register', { agentUuid: agentUuid?.value ?? null });
     });
 
-    this.socket.on('connected', async (payload: { agentCode: string }) => {
+    this.socket.on('register', async (payload: { agentCode: string, agentUuid: string}) => {
+      log('Received Response From Event Register')
+      log(payload)
       await this.prismaService.agentInfo.upsert({
         where: { key: 'agent-code' },
         create: { key: 'agent-code', value: payload.agentCode },
         update: { value: payload.agentCode },
       });
+      await this.prismaService.agentInfo.upsert({
+        where: { key: 'agent-uuid' },
+        create: { key: 'agent-uuid', value: payload.agentUuid },
+        update: { value: payload.agentUuid }
+      })
       log(`Agent Code Received from Hub.\n → Agent Code: ${payload.agentCode}`);
-    });
+    })
 
     this.socket.on('disconnect', () => {
       log('{{ bold : red : Socket Connection Lost with Hub. }}');

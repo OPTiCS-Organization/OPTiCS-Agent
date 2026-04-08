@@ -40,9 +40,12 @@ export class DockerService implements OnModuleInit {
     deployPreset: DEPLOY_OPTION,
     onLog: (line: string) => void,
   ): Promise<void> {
-    if (this.logStreams.has(containerName)) return;
+    if (this.logStreams.has(containerName)) {
+      this.stopContainerLog(containerName);
+    }
 
-    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
+    log(`[DockerService] streamContainerLog | deployPreset="${deployPreset}" | isCompose=${isCompose}`);
 
     if (isCompose) {
       // Compose: docker compose -p {name} logs --follow --tail 10000
@@ -51,14 +54,15 @@ export class DockerService implements OnModuleInit {
       proc.stdout.on('data', (chunk: Buffer) => {
         chunk.toString('utf8').split('\n').filter(l => l.trim()).forEach(line => onLog(line));
       });
+      proc.stderr.on('data', (chunk: Buffer) => {
+        chunk.toString('utf8').split('\n').filter(l => l.trim()).forEach(line => onLog(`ERROR: ${line}`));
+      });
       proc.on('close', () => { this.logStreams.delete(containerName); });
       log(`[DockerService] streamContainerLog (compose) started | project=${containerName}`);
     } else {
       try {
         const container = this.docker.getContainer(containerName);
-        const info = await container.inspect() as { State: { StartedAt: string } };
-        const since = Math.floor(new Date(info.State.StartedAt).getTime() / 1000);
-        const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000, since }) as unknown as import('stream').Readable;
+        const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000 }) as unknown as import('stream').Readable;
         this.logStreams.set(containerName, stream);
         stream.on('data', (chunk: Buffer) => {
           const raw = chunk.length > 8 ? chunk.subarray(8).toString('utf8') : chunk.toString('utf8');
@@ -81,10 +85,14 @@ export class DockerService implements OnModuleInit {
     }
   }
 
+  /**
+   * Done: Log
+   * 서비스 시작 시 도커 이벤트 소켓 구독
+   */
   onModuleInit() {
     this.docker.getEvents({}, (err, stream) => {
       if (err || !stream) {
-        log(`[DockerService] Failed to subscribe to Docker events: ${String(err)}`);
+        log(`[DockerService] Failed to subscribe to Docker events: ${String(err)}`, 500, 'ERROR');
         return;
       }
       stream.on('data', (chunk: Buffer) => {
@@ -99,25 +107,34 @@ export class DockerService implements OnModuleInit {
           const name = event.Actor.Attributes['name'] ?? '';
           const action = event.Action;
 
-          log(`[DockerService] container event | action=${action} | name=${name}`);
+          log(`[DockerService] Container Command Received.\nTarget Container: ${name}\nAction=${action}`);
 
           if (!this.statusEmit) return;
 
-          if (action === 'die' || action === 'stop' || action === 'kill') {
-            const exitCode = event.Actor.Attributes['exitCode'] ?? '0';
-            const status = exitCode !== '0' ? 'failed' : 'stopped';
-            log(`[DockerService] → status=${status} | exitCode=${exitCode}`);
-            // serviceName으로 serviceIndex를 알 수 없으므로 name을 함께 emit
-            void this.statusEmit(`${status}:${name}`);
-          } else if (action === 'start') {
-            log(`[DockerService] → status=running`);
-            void this.statusEmit(`running:${name}`);
-          } else if (action === 'restart') {
-            log(`[DockerService] → status=restarting`);
-            void this.statusEmit(`restarting:${name}`);
-          } else if (action === 'destroy') {
-            log(`[DockerService] → status=removed`);
-            void this.statusEmit(`removed:${name}`);
+          switch (action) {
+            case 'die':
+            case 'stop':
+            case 'kill': {
+              const exitCode = event.Actor.Attributes['exitCode'] ?? '0';
+              const status = exitCode !== '0' ? 'failed' : 'stopped';
+              log(`[DockerService] Stopping Container '${name}'...\nExit Code: ${exitCode}\nExit State: ${status}`);
+              void this.statusEmit(`${status}:${name}`);
+              break;
+            }
+            case 'start': {
+              log(`[DockerService] Starting Container '${name}'...`);
+              void this.statusEmit(`running:${name}`);
+              break;
+            }
+            case 'restart': {
+              log(`[DockerService] Restarting Container '${name}'...`);
+              void this.statusEmit(`restarting:${name}`);
+              break;
+            }
+            case 'destroy': {
+              log(`[DockerService] Removing Container '${name}'...`)
+              void this.statusEmit(`removed:${name}`);
+            }
           }
         } catch {
           // JSON 파싱 실패 무시
@@ -126,6 +143,8 @@ export class DockerService implements OnModuleInit {
     });
   }
 
+  // IN: https://www.github.com/acorn497/testproject.git
+  // RETURN: https://www.github.com/acotn497/testproject
   private repoName(url: string): string {
     return url.split('/').pop()?.replace(/\.git$/, '') ?? 'repo';
   }
@@ -139,39 +158,49 @@ export class DockerService implements OnModuleInit {
 
     if (urls.length === 1) {
       // 단일 URL: baseDir에 바로 클론
-      sendLog(`Cloning from '${urls[0]}'...`);
+      sendLog(`[DockerService] Cloning Source...\nFrom: ${urls[0]}`);
       await this.gitService.clone(urls[0], baseDir);
-      sendLog('Clone done.');
+      sendLog('[DockerService] Clone done.');
       return baseDir;
     }
 
     // 복수 URL: baseDir/{repoName}/ 에 각각 클론, 첫 번째가 메인
     for (const url of urls) {
       const repoDir = path.join(baseDir, this.repoName(url));
-      sendLog(`Cloning '${url}' → ${this.repoName(url)}/...`);
+      sendLog(`[DockerService] Cloning Source...\nFrom: $${url}\nInto: ${this.repoName(url)}`)
       await this.gitService.clone(url, repoDir);
     }
-    sendLog('All repositories cloned.');
+    sendLog('[DockerService] All Repository Successfully Cloned.');
     return path.join(baseDir, this.repoName(urls[0]));
   }
 
   // 컨테이너 이름을 받아 시작 하는 함수
-  async runService(serviceName: string, serviceVersion: string, servicePort: number, env?: Record<string, string>) {
+  async runService(serviceName: string, serviceVersion: string, servicePort: number, env?: Record<string, string>, servicePortBindings?: Record<number, number>) {
+    const portBindings: Record<string, { HostPort: string }[]> = {};
+    const exposedPorts: Record<string, object> = {};
+
+    if (servicePortBindings) {
+      for (const [containerPort, hostPort] of Object.entries(servicePortBindings)) {
+        const key = `${containerPort}/tcp`;
+        portBindings[key] = [{ HostPort: String(hostPort) }];
+        exposedPorts[key] = {};
+      }
+    }
+
     const container = await this.docker.createContainer({
       Image: `${serviceName.toLowerCase()}:${serviceVersion}`,
       name: serviceName.toLowerCase(),
       Env: env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : undefined,
+      ExposedPorts: exposedPorts,
       HostConfig: {
-        PortBindings: {
-          [`${servicePort}/tcp`]: [{ HostPort: String(servicePort) }]
-        },
-        RestartPolicy: { Name: 'unless-stopped' },
-        ExtraHosts: ['host.docker.internal:host-gateway']
-      }
+        PortBindings: portBindings,
+        RestartPolicy: { Name: 'no' },
+        ExtraHosts: ['host.docker.internal:host-gateway'],
+      },
     });
 
     await container.start();
-    log('Started Service')
+    log('Started Service');
   }
 
   async stopService(
@@ -182,7 +211,7 @@ export class DockerService implements OnModuleInit {
     const si = serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
-    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
       sendLog(`Stopping service '${si}'...`);
@@ -213,7 +242,7 @@ export class DockerService implements OnModuleInit {
     const si = serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
-    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
       sendStatus('restarting');
@@ -245,7 +274,7 @@ export class DockerService implements OnModuleInit {
     const si = serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', { serviceName, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceName, status });
-    const isCompose = deployPreset !== DEPLOY_OPTION.DOCKERFILE;
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
       sendLog(`Deleting service '${si}'...`);
@@ -319,15 +348,16 @@ export class DockerService implements OnModuleInit {
         try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip */ }
       });
 
+      const preset = data.deployPreset.toUpperCase() as DEPLOY_OPTION;
       const composeFileExists = fs.existsSync(path.join(buildDir, 'docker-compose.yml'))
         || fs.existsSync(path.join(buildDir, 'docker-compose.yaml'));
 
-      if (data.deployPreset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
+      if (preset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
         throw new Error('docker-compose.yml not found.');
       }
 
-      const hasCompose = data.deployPreset === DEPLOY_OPTION.COMPOSE
-        || (data.deployPreset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
+      const hasCompose = preset === DEPLOY_OPTION.COMPOSE
+        || (preset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
 
       if (hasCompose) {
         sendLog('Detected docker-compose, starting build...');
@@ -393,15 +423,16 @@ export class DockerService implements OnModuleInit {
         try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip non-chmodable */ }
       });
 
+      const preset = data.deployPreset.toUpperCase() as DEPLOY_OPTION;
       const composeFileExists = fs.existsSync(path.join(buildDir, 'docker-compose.yml'))
         || fs.existsSync(path.join(buildDir, 'docker-compose.yaml'));
 
-      if (data.deployPreset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
+      if (preset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
         throw new Error('docker-compose.yml not found. Change deploy option to DOCKERFILE or add docker-compose.yml to the repository.');
       }
 
-      const hasCompose = data.deployPreset === DEPLOY_OPTION.COMPOSE
-        || (data.deployPreset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
+      const hasCompose = preset === DEPLOY_OPTION.COMPOSE
+        || (preset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
 
       if (hasCompose) {
         sendLog('Detected docker-compose, starting build...');

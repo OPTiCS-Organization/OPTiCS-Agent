@@ -17,7 +17,7 @@ services:
     build: ../OPTiCS-Agent-Dashboard
     image: optics-agent-dashboard
     ports:
-      - "${DASHBOARD_PORT:-5173}:80"
+      - "${DASHBOARD_PORT:-5240}:80"
     networks:
       - service-network
 
