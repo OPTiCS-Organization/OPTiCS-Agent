@@ -4,6 +4,7 @@ COPY package*.json ./
 COPY prisma/ ./
 RUN npm ci
 RUN npx prisma generate
+RUN npx prisma db push --accept-data-loss
 COPY . .
 RUN npm run build
 
@@ -12,7 +13,6 @@ RUN apk add --no-cache git docker-cli docker-cli-compose
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
-RUN npx prisma db push --accept-data-loss
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
