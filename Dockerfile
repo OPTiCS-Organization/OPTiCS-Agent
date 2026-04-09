@@ -1,10 +1,11 @@
 FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-COPY prisma/ ./
+COPY prisma/ ./prisma
+COPY prisma.config.ts ./
 RUN npm ci
 RUN npx prisma generate
-RUN npx prisma db push --accept-data-loss
+RUN ls -la
 COPY . .
 RUN npm run build
 
@@ -16,6 +17,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 ENTRYPOINT ["sh", "entrypoint.sh"]
