@@ -1,9 +1,12 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
+import log from 'spectra-log';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  log.setDebugLevel('TRACE');
 
   app.useGlobalPipes(new ValidationPipe());
   app.enableVersioning({ type: VersioningType.URI });

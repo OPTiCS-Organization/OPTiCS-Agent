@@ -27,9 +27,8 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     const hubUrl = process.env.HUB_URL ?? 'http://localhost:3000';
 
     const agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } })
-    if (agentUuid) {
-      log(`UUID Found!: ${agentUuid.value}`)
-    }
+    if (agentUuid) log(`UUID Found: ${agentUuid.value}`);
+    else log('No UUID Found');
 
     this.socket = io(`${hubUrl}/agent`, {
       reconnection: true,
@@ -46,9 +45,12 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       this.socket.emit('register', { agentUuid: agentUuid?.value ?? null });
     });
 
-    this.socket.on('register', async (payload: { agentCode: string, agentUuid: string}) => {
-      log('Received Response From Event Register')
-      log(payload)
+    this.socket.on('register', async (payload: { agentCode: string, agentUuid: string }) => {
+      log(`[{{ bold : cyan : Tunnel Service}}] Received register event.`)
+      if (agentUuid && agentUuid.value !== payload.agentUuid) {
+        agentUuid.value = payload.agentUuid;
+        log(`UUID Updated: ${agentUuid.value}`);
+      }
       await this.prismaService.agentInfo.upsert({
         where: { key: 'agent-code' },
         create: { key: 'agent-code', value: payload.agentCode },
