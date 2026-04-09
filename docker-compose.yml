@@ -5,7 +5,7 @@ services:
     ports:
       - "${AGENT_PORT:-5230}:5230"
     volumes:
-      - "./data.db:/app/data.db"
+      - "optics-data:/app/data"
       - "/var/run/docker.sock:/var/run/docker.sock"
     networks:
       - service-network
@@ -23,3 +23,6 @@ services:
 
 networks:
   service-network: {}
+
+volumes:
+  optics-data: {}

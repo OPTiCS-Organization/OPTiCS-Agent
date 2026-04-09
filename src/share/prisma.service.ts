@@ -9,7 +9,7 @@ export class PrismaService
 {
   constructor() {
     const adapter = new PrismaBetterSqlite3({
-      url: 'file:./data.db',
+      url: 'file:/app/data/data.db',
     });
     super({ adapter });
   }
