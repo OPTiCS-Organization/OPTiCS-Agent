@@ -22,12 +22,19 @@ export class AppService {
     private readonly infoGateway: InfoGateway,
   ) {}
 
-  async getConnectionCode() {
-    return await this.prismaService.agentInfo.findFirst({
+  public async getAgentInfo() {
+    const agentCode = await this.prismaService.agentInfo.findFirst({
       where: {
         key: 'agent-code',
       },
     });
+    const agentIp = await this.prismaService.agentInfo.findFirst({
+      where: {
+        key: 'agent-ip',
+      }
+    });
+
+    return {agentCode, agentIp}
   }
 
   @Cron('* * * * * *')

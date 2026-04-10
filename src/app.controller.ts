@@ -10,8 +10,8 @@ export class AppController {
   ) {}
 
   @Get('/connect')
-  async handleDisplayConnectionCode() {
-    return this.appService.getConnectionCode();
+  async handleGetInformation() {
+    return await this.appService.getAgentInfo();
   }
 
   @Get('/cpu-metrics')
