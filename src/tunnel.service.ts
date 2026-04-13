@@ -10,11 +10,11 @@ import { PrismaService } from './share/prisma.service';
 import { NotifyService } from './notify/notify.service';
 import type { ConnectRequestPayload } from './notify/notify.service';
 import { NotifyGateway } from './notify/notify.gateway';
-
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
+  private socket!: Socket;
+
   constructor(
-    private socket: Socket,
     private readonly serviceLifecycleService: ServiceLifecycleService,
     private readonly serviceGateway: ServiceGateway,
     private readonly prismaService: PrismaService,
