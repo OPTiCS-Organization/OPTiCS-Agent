@@ -13,9 +13,8 @@ import { NotifyGateway } from './notify/notify.gateway';
 
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
-  private socket: Socket;
-
   constructor(
+    private socket: Socket,
     private readonly serviceLifecycleService: ServiceLifecycleService,
     private readonly serviceGateway: ServiceGateway,
     private readonly prismaService: PrismaService,

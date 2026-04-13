@@ -1,10 +1,8 @@
 import {
   WebSocketGateway,
-  WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import { Server } from 'socket.io';
 import { Injectable } from '@nestjs/common';
 import log from 'spectra-log';
 import { Socket } from 'socket.io-client';
@@ -30,15 +28,16 @@ interface MemoryData {
   cors: { origin: true, credentials: true },
 })
 export class InfoGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: Server;
+  constructor (
+    private server: Socket,
+  ) { };
 
   handleConnection(client: Socket) {
-    log(`Client connected: ${client.id}`);
+    log(`Client connected\n  Client ID → ${client.id}`)
   }
 
   handleDisconnect(client: Socket) {
-    log(`Client disconnected: ${client.id}`);
+    log(`Client disconnected\n  Client ID → ${client.id}`)
   }
 
   sendData(data: { cpu: CpuData; memory: MemoryData }) {
