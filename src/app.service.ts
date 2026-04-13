@@ -20,21 +20,29 @@ export class AppService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly infoGateway: InfoGateway,
-  ) {}
+  ) { }
 
   public async getAgentInfo() {
     const agentCode = await this.prismaService.agentInfo.findFirst({
       where: {
         key: 'agent-code',
       },
+      select: {
+        value: true,
+      }
     });
     const agentIp = await this.prismaService.agentInfo.findFirst({
       where: {
         key: 'agent-ip',
+      },
+      select: {
+        value: true,
       }
     });
 
-    return {agentCode, agentIp}
+    if (!agentCode || !agentIp) return { agentCode: null, agentIp: null };
+
+    return { agentCode: agentCode.value, agentIp: agentIp.value }
   }
 
   @Cron('* * * * * *')

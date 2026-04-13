@@ -6,7 +6,7 @@ import { Server } from 'socket.io';
 @WebSocketGateway({ namespace: '/service', cors: { origin: true, credentials: true } })
 export class ServiceGateway {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   pushStatus(serviceIndex: number, status: string) {
     this.server.emit('service-status', { serviceIndex, status });
