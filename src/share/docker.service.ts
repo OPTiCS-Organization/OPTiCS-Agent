@@ -3,7 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import Docker from "dockerode";
 import path from "path";
 import fs from "fs";
-import { spawn } from "child_process";
+import { ChildProcessWithoutNullStreams, spawn } from "child_process";
+import { Readable } from "stream";
 import log from "spectra-log";
 import { DeployCommand } from "../service/dtos/DeployCommand.dto";
 import { GitService } from "./git.service";
@@ -33,7 +34,7 @@ export class DockerService implements OnModuleInit {
     this.statusEmit = fn;
   }
 
-  private logStreams = new Map<string, import('stream').Readable>();
+  private logStreams = new Map<string, Readable | ChildProcessWithoutNullStreams>();
 
   async streamContainerLog(
     containerName: string,
@@ -50,19 +51,23 @@ export class DockerService implements OnModuleInit {
     if (isCompose) {
       // Compose: docker compose -p {name} logs --follow --tail 10000
       const proc = spawn('docker', ['compose', '-p', containerName, 'logs', '--follow', '--tail', '10000'], {});
-      this.logStreams.set(containerName, proc.stdout as unknown as import('stream').Readable);
+      this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
         chunk.toString('utf8').split('\n').filter(l => l.trim()).forEach(line => onLog(line));
       });
       proc.stderr.on('data', (chunk: Buffer) => {
         chunk.toString('utf8').split('\n').filter(l => l.trim()).forEach(line => onLog(`ERROR: ${line}`));
       });
-      proc.on('close', () => { this.logStreams.delete(containerName); });
+      proc.on('close', () => {
+        if (this.logStreams.get(containerName) === proc) {
+          this.logStreams.delete(containerName);
+        }
+      });
       log(`[DockerService] streamContainerLog (compose) started | project=${containerName}`);
     } else {
       try {
         const container = this.docker.getContainer(containerName);
-        const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000 }) as unknown as import('stream').Readable;
+        const stream = await container.logs({ follow: true, stdout: true, stderr: true, tail: 10000 }) as unknown as Readable;
         this.logStreams.set(containerName, stream);
         stream.on('data', (chunk: Buffer) => {
           const raw = chunk.length > 8 ? chunk.subarray(8).toString('utf8') : chunk.toString('utf8');
@@ -79,7 +84,11 @@ export class DockerService implements OnModuleInit {
   stopContainerLog(containerName: string): void {
     const stream = this.logStreams.get(containerName);
     if (stream) {
-      stream.destroy();
+      if ('kill' in stream) {
+        stream.kill();
+      } else {
+        stream.destroy();
+      }
       this.logStreams.delete(containerName);
       log(`[DockerService] streamContainerLog stopped | name=${containerName}`);
     }
