@@ -13,6 +13,7 @@ export interface ConnectRequestPayload {
 const PENDING_REQUEST_KEY = 'pending-connect-request';
 
 const AGENT_CODE_KEY = 'agent-code';
+const AGENT_UUID_KEY = 'agent-uuid';
 
 @Injectable()
 export class NotifyService {
@@ -49,13 +50,21 @@ export class NotifyService {
     });
     if (!agentCodeRow) throw new Error('Agent code not found.');
 
+    const agentUuidRow = await this.prismaService.agentInfo.findUnique({
+      where: { key: AGENT_UUID_KEY },
+    });
+    if (!agentUuidRow) throw new Error('Agent uuid not found.');
+
     const hubUrl = this.configService.get<string>('HUB_URL');
     const endpoint = accept ? 'accept' : 'reject';
 
     await fetch(`${hubUrl}/v1/agent/connect/${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentCode: agentCodeRow.value }),
+      body: JSON.stringify({
+        agentCode: agentCodeRow.value,
+        agentUuid: agentUuidRow.value,
+      }),
     });
 
     await this.clearPendingRequest();

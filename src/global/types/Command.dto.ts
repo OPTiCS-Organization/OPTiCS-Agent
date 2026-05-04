@@ -7,9 +7,12 @@ export class Command {
   deployPreset: DEPLOY_OPTION;
 
   serviceIndex: number;
-  sourceUrl: string;
+  sourceUrl: string | string[];
+  rootDirectory?: string | null;
   serviceName: string;
   servicePort: number;
+  serviceHostPort?: number;
+  serviceContainerPort?: number;
   serviceVersion: string;
 
   env: Record<string, string>;

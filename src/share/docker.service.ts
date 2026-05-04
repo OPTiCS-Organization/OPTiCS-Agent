@@ -183,18 +183,34 @@ export class DockerService implements OnModuleInit {
     return path.join(baseDir, this.repoName(urls[0]));
   }
 
+  private resolveBuildContext(baseDir: string, rootDirectory: string | null | undefined): string {
+    const cleanRoot = rootDirectory?.trim();
+    if (!cleanRoot || cleanRoot === '.') return baseDir;
+
+    const resolved = path.resolve(baseDir, cleanRoot);
+    const relative = path.relative(baseDir, resolved);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error('Root directory must stay inside the cloned repository.');
+    }
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      throw new Error(`Root directory not found: ${cleanRoot}`);
+    }
+    return resolved;
+  }
+
   // 컨테이너 이름을 받아 시작 하는 함수
-  async runService(serviceName: string, serviceVersion: string, servicePort: number, env?: Record<string, string>, servicePortBindings?: Record<number, number>) {
+  async runService(
+    serviceName: string,
+    serviceVersion: string,
+    hostPort: number,
+    containerPort: number,
+    env?: Record<string, string>,
+  ) {
     const portBindings: Record<string, { HostPort: string }[]> = {};
     const exposedPorts: Record<string, object> = {};
-
-    if (servicePortBindings) {
-      for (const [containerPort, hostPort] of Object.entries(servicePortBindings)) {
-        const key = `${containerPort}/tcp`;
-        portBindings[key] = [{ HostPort: String(hostPort) }];
-        exposedPorts[key] = {};
-      }
-    }
+    const key = `${containerPort}/tcp`;
+    portBindings[key] = [{ HostPort: String(hostPort) }];
+    exposedPorts[key] = {};
 
     const container = await this.docker.createContainer({
       Image: `${serviceName.toLowerCase()}:${serviceVersion}`,
@@ -351,7 +367,11 @@ export class DockerService implements OnModuleInit {
       // 기존 빌드 디렉토리 제거
       fs.rmSync(path.join(__dirname, '../build', name), { recursive: true, force: true });
 
-      const buildDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', name), sendLog);
+      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', name), sendLog);
+      const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
+      if (buildDir !== clonedDir) {
+        sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
+      }
       fs.chmodSync(buildDir, 0o755);
       fs.readdirSync(buildDir).forEach(file => {
         try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip */ }
@@ -400,7 +420,13 @@ export class DockerService implements OnModuleInit {
           });
         });
         sendLog('Build done. Starting container...');
-        await this.runService(data.serviceName, data.serviceVersion, data.servicePort, data.env);
+        await this.runService(
+          data.serviceName,
+          data.serviceVersion,
+          data.serviceHostPort ?? data.servicePort,
+          data.serviceContainerPort ?? data.servicePort,
+          data.env,
+        );
       }
 
       sendStatus('running');
@@ -426,7 +452,11 @@ export class DockerService implements OnModuleInit {
     try {
       sendStatus('building');
       sendLog(`Creating new Service '${data.serviceName.toLowerCase()}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
-      const buildDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', data.serviceName.toLowerCase()), sendLog);
+      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', data.serviceName.toLowerCase()), sendLog);
+      const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
+      if (buildDir !== clonedDir) {
+        sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
+      }
       fs.chmodSync(buildDir, 0o755);
       fs.readdirSync(buildDir).forEach(file => {
         try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip non-chmodable */ }
@@ -475,7 +505,13 @@ export class DockerService implements OnModuleInit {
           });
         });
         sendLog('Build done. Starting container...');
-        await this.runService(data.serviceName, data.serviceVersion, data.servicePort, data.env);
+        await this.runService(
+          data.serviceName,
+          data.serviceVersion,
+          data.serviceHostPort ?? data.servicePort,
+          data.serviceContainerPort ?? data.servicePort,
+          data.env,
+        );
       }
 
       sendStatus('running');

@@ -11,6 +11,10 @@ export class DeployCommand {
 
   @IsOptional()
   @IsString()
+  rootDirectory?: string | null;
+
+  @IsOptional()
+  @IsString()
   apiKey: string;
 
   @IsNotEmpty()
@@ -24,6 +28,14 @@ export class DeployCommand {
   @IsNotEmpty()
   @IsNumber()
   servicePort: number;
+
+  @IsOptional()
+  @IsNumber()
+  serviceHostPort?: number;
+
+  @IsOptional()
+  @IsNumber()
+  serviceContainerPort?: number;
 
   @IsNotEmpty()
   @IsEnum(DEPLOY_OPTION)
