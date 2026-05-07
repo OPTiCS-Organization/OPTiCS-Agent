@@ -36,6 +36,25 @@ export class DockerService implements OnModuleInit {
 
   private logStreams = new Map<string, Readable | ChildProcessWithoutNullStreams>();
 
+  private async downComposeProject(
+    projectName: string,
+    cwd: string,
+    sendLog: (line: string) => void,
+  ) {
+    if (!fs.existsSync(cwd)) return;
+    sendLog(`[DockerService] Cleaning up failed compose project '${projectName}'...`);
+    await new Promise<void>((resolve) => {
+      const proc = spawn('docker', ['compose', '-p', projectName, 'down', '--remove-orphans'], { cwd });
+      proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); if (line) { log(line); sendLog(line); } });
+      proc.stderr.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); if (line) { log(line); sendLog(line); } });
+      proc.on('close', () => resolve());
+      proc.on('error', (error) => {
+        sendLog(`[DockerService] Failed to clean up compose project '${projectName}': ${String(error)}`);
+        resolve();
+      });
+    });
+  }
+
   async streamContainerLog(
     containerName: string,
     deployPreset: DEPLOY_OPTION,
@@ -345,6 +364,7 @@ export class DockerService implements OnModuleInit {
     const sendLog = (line: string) => emit('service-log', { serviceIndex: si, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceIndex: si, status });
     const name = data.serviceName.toLowerCase();
+    let composeBuildDir: string | null = null;
 
     try {
       sendStatus('building');
@@ -390,6 +410,7 @@ export class DockerService implements OnModuleInit {
 
       if (hasCompose) {
         sendLog('Detected docker-compose, starting build...');
+        composeBuildDir = buildDir;
         if (data.env) {
           const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
           fs.writeFileSync(path.join(buildDir, '.env'), envContent);
@@ -433,6 +454,9 @@ export class DockerService implements OnModuleInit {
       sendLog('Service redeployed successfully.');
       log('Redeploy success.');
     } catch (error) {
+      if (composeBuildDir) {
+        await this.downComposeProject(name, composeBuildDir, sendLog);
+      }
       fs.rmSync(path.join(__dirname, '../build', name), { recursive: true, force: true });
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
@@ -448,11 +472,13 @@ export class DockerService implements OnModuleInit {
     const si: number = Number(data.serviceIndex);
     const sendLog = (line: string) => emit('service-log', { serviceIndex: si, log: line, timestamp: new Date().toISOString() });
     const sendStatus = (status: string) => emit('service-status', { serviceIndex: si, status });
+    const name = data.serviceName.toLowerCase();
+    let composeBuildDir: string | null = null;
 
     try {
       sendStatus('building');
-      sendLog(`Creating new Service '${data.serviceName.toLowerCase()}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
-      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', data.serviceName.toLowerCase()), sendLog);
+      sendLog(`Creating new Service '${name}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
+      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', name), sendLog);
       const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
       if (buildDir !== clonedDir) {
         sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
@@ -475,12 +501,13 @@ export class DockerService implements OnModuleInit {
 
       if (hasCompose) {
         sendLog('Detected docker-compose, starting build...');
+        composeBuildDir = buildDir;
         if (data.env) {
           const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
           fs.writeFileSync(path.join(buildDir, '.env'), envContent);
         }
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir });
+          const proc = spawn('docker', ['compose', '-p', name, 'up', '-d', '--build'], { cwd: buildDir });
           proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
           proc.stderr.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
@@ -518,7 +545,10 @@ export class DockerService implements OnModuleInit {
       sendLog('Service started successfully.');
       log('Success.');
     } catch (error) {
-      fs.rmSync(path.join(__dirname, '../build', data.serviceName.toLowerCase()), { recursive: true, force: true });
+      if (composeBuildDir) {
+        await this.downComposeProject(name, composeBuildDir, sendLog);
+      }
+      fs.rmSync(path.join(__dirname, '../build', name), { recursive: true, force: true });
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);

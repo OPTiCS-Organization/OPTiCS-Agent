@@ -2,6 +2,25 @@
 // npm install --save-dev prisma dotenv
 import 'dotenv/config';
 import { defineConfig } from '@prisma/config';
+import fs from 'fs';
+import path from 'path';
+
+function isContainerRuntime() {
+  return process.env.OPTICS_AGENT_RUNTIME === 'container' || fs.existsSync('/.dockerenv');
+}
+
+function databaseUrl() {
+  const configured = process.env.DATABASE_URL;
+  if (isContainerRuntime()) {
+    return configured ?? 'file:/app/data/data.db';
+  }
+
+  if (configured && configured !== 'file:/app/data/data.db') {
+    return configured;
+  }
+
+  return `file:${path.resolve(process.cwd(), 'data', 'data.db')}`;
+}
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',
@@ -9,6 +28,6 @@ export default defineConfig({
     path: 'prisma/migrations',
   },
   datasource: {
-    url: process.env.DATABASE_URL ?? 'file:/app/data/data.db',
+    url: databaseUrl(),
   },
 });
