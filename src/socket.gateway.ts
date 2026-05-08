@@ -33,11 +33,11 @@ export class InfoGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private server!: Server;
 
   handleConnection(client: Socket) {
-    log(`Client connected\n  Client ID → ${client.id}`)
+    log(`Agent Dashboard Connected.\n  {{ bold : dim : Dashboard ID: ${client.id} }}`)
   }
 
   handleDisconnect(client: Socket) {
-    log(`Client disconnected\n  Client ID → ${client.id}`)
+    log(`Agent Dashboard Disconnected.\n  {{ bold : dim : Dashboard ID: ${client.id} }}`)
   }
 
   sendData(data: { cpu: CpuData; memory: MemoryData }) {
