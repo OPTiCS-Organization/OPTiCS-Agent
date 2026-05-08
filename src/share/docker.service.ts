@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import Docker from "dockerode";
 import path from "path";
 import fs from "fs";
-import { ChildProcessWithoutNullStreams, spawn } from "child_process";
+import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "child_process";
 import { Readable } from "stream";
 import log from "spectra-log";
 import { DeployCommand } from "../service/dtos/DeployCommand.dto";
@@ -11,6 +11,16 @@ import { GitService } from "./git.service";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
 
 type StatusEmit = (raw: string) => void | Promise<void>;
+type HubEmit = (event: 'service-status' | 'service-log' | 'container-status', payload: object) => void;
+type ContainerStatus = 'building' | 'starting' | 'running' | 'stopped' | 'failed' | 'removed';
+type ContainerSnapshot = {
+  name: string;
+  status: ContainerStatus;
+  service?: string;
+  exitCode?: number | null;
+  health?: string | null;
+};
+type ExpectedServicesCallback = (services: string[]) => void;
 
 @Global()
 @Injectable()
@@ -35,6 +45,124 @@ export class DockerService implements OnModuleInit {
   }
 
   private logStreams = new Map<string, Readable | ChildProcessWithoutNullStreams>();
+
+  private normalizeContainerStatus(state?: string, exitCode?: number | null, health?: string | null): ContainerStatus {
+    const normalizedState = (state ?? '').toLowerCase();
+    const normalizedHealth = (health ?? '').toLowerCase();
+    if (normalizedState === 'removing' || normalizedState === 'removed') return 'removed';
+    if (normalizedState === 'created' || normalizedState === 'restarting') return 'starting';
+    if (normalizedState === 'running') {
+      if (normalizedHealth === 'unhealthy') return 'failed';
+      if (normalizedHealth === 'starting') return 'starting';
+      return 'running';
+    }
+    if (normalizedState === 'exited' || normalizedState === 'dead') return exitCode && exitCode !== 0 ? 'failed' : 'stopped';
+    if (normalizedState === 'paused') return 'stopped';
+    return 'stopped';
+  }
+
+  private parseJsonOutput<T = Record<string, unknown>>(output: string): T[] {
+    const trimmed = output.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed) as T | T[];
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return trimmed.split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .flatMap(line => {
+          try { return [JSON.parse(line) as T]; } catch { return []; }
+        });
+    }
+  }
+
+  private healthFromStatus(status?: string): string | null {
+    if (!status) return null;
+    const lower = status.toLowerCase();
+    if (lower.includes('unhealthy')) return 'unhealthy';
+    if (lower.includes('health: starting') || lower.includes('(health: starting)')) return 'starting';
+    if (lower.includes('healthy')) return 'healthy';
+    return null;
+  }
+
+  private labelsToRecord(labels?: string): Record<string, string> {
+    if (!labels) return {};
+    return Object.fromEntries(
+      labels.split(',')
+        .map(label => label.split('='))
+        .filter(([key]) => Boolean(key))
+        .map(([key, ...value]) => [key, value.join('=')]),
+    );
+  }
+
+  private inspectDockerfileContainer(serviceName: string): ContainerSnapshot[] {
+    const result = spawnSync('docker', ['inspect', serviceName], { encoding: 'utf8' });
+    if (result.status !== 0) return [];
+    return this.parseJsonOutput<Record<string, any>>(result.stdout).map(container => {
+      const state = container.State ?? {};
+      const exitCode = typeof state.ExitCode === 'number' ? state.ExitCode : null;
+      const health = typeof state.Health?.Status === 'string' ? state.Health.Status : null;
+      return {
+        name: container.Name ? String(container.Name).replace(/^\//, '') : serviceName,
+        status: this.normalizeContainerStatus(state.Status, exitCode, health),
+        exitCode,
+        health,
+      };
+    });
+  }
+
+  private listComposeContainers(projectName: string): ContainerSnapshot[] {
+    const buildDir = path.join(__dirname, '../build', projectName);
+    if (fs.existsSync(buildDir)) {
+      const composeResult = spawnSync(
+        'docker',
+        ['compose', '-p', projectName, 'ps', '-a', '--format', 'json'],
+        { cwd: buildDir, encoding: 'utf8' },
+      );
+      if (composeResult.status === 0) {
+        const composeRows = this.parseJsonOutput<Record<string, any>>(composeResult.stdout);
+        if (composeRows.length > 0) {
+          return composeRows.map(row => {
+            const exitCode = typeof row.ExitCode === 'number' ? row.ExitCode : Number.isFinite(Number(row.ExitCode)) ? Number(row.ExitCode) : null;
+            const health = typeof row.Health === 'string' ? row.Health : this.healthFromStatus(row.Status);
+            return {
+              name: String(row.Name ?? row.Names ?? row.ID ?? ''),
+              service: row.Service ? String(row.Service) : undefined,
+              status: this.normalizeContainerStatus(row.State, exitCode, health),
+              exitCode,
+              health,
+            };
+          }).filter(container => container.name);
+        }
+      }
+    }
+
+    const psResult = spawnSync(
+      'docker',
+      ['ps', '-a', '--filter', `label=com.docker.compose.project=${projectName}`, '--format', '{{json .}}'],
+      { encoding: 'utf8' },
+    );
+    if (psResult.status !== 0) return [];
+    return this.parseJsonOutput<Record<string, any>>(psResult.stdout).map(row => {
+      const labels = this.labelsToRecord(row.Labels ? String(row.Labels) : '');
+      const health = this.healthFromStatus(row.Status ? String(row.Status) : undefined);
+      return {
+        name: String(row.Names ?? ''),
+        service: labels['com.docker.compose.service'],
+        status: this.normalizeContainerStatus(row.State ? String(row.State) : undefined, null, health),
+        exitCode: null,
+        health,
+      };
+    }).filter(container => container.name);
+  }
+
+  async getContainerSnapshot(serviceName: string, deployPreset: DEPLOY_OPTION): Promise<ContainerSnapshot[]> {
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
+    return isCompose
+      ? this.listComposeContainers(serviceName)
+      : this.inspectDockerfileContainer(serviceName);
+  }
 
   private async downComposeProject(
     projectName: string,
@@ -135,8 +263,6 @@ export class DockerService implements OnModuleInit {
           const name = event.Actor.Attributes['name'] ?? '';
           const action = event.Action;
 
-          log(`[DockerService] Container Command Received.\nTarget Container: ${name}\nAction=${action}`);
-
           if (!this.statusEmit) return;
 
           switch (action) {
@@ -147,6 +273,10 @@ export class DockerService implements OnModuleInit {
               const status = exitCode !== '0' ? 'failed' : 'stopped';
               log(`[DockerService] Stopping Container '${name}'...\nExit Code: ${exitCode}\nExit State: ${status}`);
               void this.statusEmit(`${status}:${name}`);
+              break;
+            }
+            case 'create': {
+              void this.statusEmit(`starting:${name}`);
               break;
             }
             case 'start': {
@@ -358,7 +488,8 @@ export class DockerService implements OnModuleInit {
 
   async redeployService(
     data: DeployCommand,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
+    onExpectedServices?: ExpectedServicesCallback,
   ) {
     const si: number = Number(data.serviceIndex);
     const sendLog = (line: string) => emit('service-log', { serviceIndex: si, log: line, timestamp: new Date().toISOString() });
@@ -415,6 +546,8 @@ export class DockerService implements OnModuleInit {
           const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
           fs.writeFileSync(path.join(buildDir, '.env'), envContent);
         }
+        const services = this.writeNoRestartOverride(buildDir, sendLog);
+        onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
           const proc = spawn('docker', ['compose', '-p', name ?? data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir });
           proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
@@ -453,6 +586,7 @@ export class DockerService implements OnModuleInit {
       sendStatus('running');
       sendLog('Service redeployed successfully.');
       log('Redeploy success.');
+      return true;
     } catch (error) {
       if (composeBuildDir) {
         await this.downComposeProject(name, composeBuildDir, sendLog);
@@ -461,13 +595,45 @@ export class DockerService implements OnModuleInit {
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);
+      return false;
     }
+  }
+
+  private writeNoRestartOverride(buildDir: string, sendLog: (line: string) => void): string[] {
+    let services: string[] = [];
+    try {
+      const result = spawnSync(
+        'docker', ['compose', 'config', '--services'],
+        { cwd: buildDir, encoding: 'utf8' },
+      );
+
+      if (result.status !== 0) {
+        sendLog('[DockerService] Could not resolve service list for override, skipping.');
+        return [];
+      }
+      services = result.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+    } catch {
+      sendLog('[DockerService] Could not resolve service list for override, skipping.');
+      return [];
+    }
+
+    if (services.length === 0) return [];
+
+    const overrideContent = [
+      'services:',
+      ...services.map(s => `  ${s}:\n    restart: "no"`),
+    ].join('\n') + '\n';
+
+    fs.writeFileSync(path.join(buildDir, 'docker-compose.override.yml'), overrideContent);
+    sendLog(`[DockerService] Injected restart: "no" override for services: ${services.join(', ')}`);
+    return services;
   }
 
   // 이미지로 빌드하는 함수
   async deployNewService(
     data: DeployCommand,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
+    onExpectedServices?: ExpectedServicesCallback,
   ) {
     const si: number = Number(data.serviceIndex);
     const sendLog = (line: string) => emit('service-log', { serviceIndex: si, log: line, timestamp: new Date().toISOString() });
@@ -506,6 +672,8 @@ export class DockerService implements OnModuleInit {
           const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
           fs.writeFileSync(path.join(buildDir, '.env'), envContent);
         }
+        const services = this.writeNoRestartOverride(buildDir, sendLog);
+        onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
           const proc = spawn('docker', ['compose', '-p', name, 'up', '-d', '--build'], { cwd: buildDir });
           proc.stdout.on('data', (chunk: Buffer) => { const line = chunk.toString().trim(); log(line); sendLog(line); });
@@ -544,6 +712,7 @@ export class DockerService implements OnModuleInit {
       sendStatus('running');
       sendLog('Service started successfully.');
       log('Success.');
+      return true;
     } catch (error) {
       if (composeBuildDir) {
         await this.downComposeProject(name, composeBuildDir, sendLog);
@@ -552,6 +721,7 @@ export class DockerService implements OnModuleInit {
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);
+      return false;
     }
   }
 }

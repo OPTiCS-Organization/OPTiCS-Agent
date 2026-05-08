@@ -6,11 +6,32 @@ import { PrismaService } from 'src/share/prisma.service';
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 import log from 'spectra-log';
 
-type HubEmit = (event: 'service-status' | 'service-log', payload: object) => void;
+type HubEmit = (event: 'service-status' | 'service-log' | 'container-status', payload: object) => void;
+
+export interface ContainerState {
+  name: string;
+  status: ContainerStatus;
+  service?: string;
+  exitCode?: number | null;
+  health?: string | null;
+}
+
+export type ContainerStatus = 'building' | 'starting' | 'running' | 'stopped' | 'failed' | 'removed';
+
+export interface ContainerSnapshot {
+  serviceIndex: number;
+  containers: ContainerState[];
+  counts: {
+    running: number;
+    total: number;
+  };
+}
 
 @Injectable()
 export class ServiceLifecycleService implements OnModuleInit {
   private hubEmit: HubEmit | null = null;
+  private containerSnapshots = new Map<number, ContainerSnapshot>();
+  private trackedServices = new Map<number, { serviceName: string; deployPreset: DEPLOY_OPTION }>();
 
   constructor (
     private readonly dockerService: DockerService,
@@ -22,35 +43,92 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   onModuleInit() {
-    this.dockerService.registerStatusEmit(async (raw: string) => {
+    this.dockerService.registerStatusEmit((raw: string) => {
       // raw 형식: "status:containerName"
       const colonIdx = raw.indexOf(':');
-      const status = raw.slice(0, colonIdx);
       const containerName = raw.slice(colonIdx + 1);
 
-      // Compose 컨테이너명({project}-{svc}-{n}) → 프로젝트명(serviceName)으로 역매핑
-      const services = await this.prismaService.services.findMany();
-      const service = services.find(s =>
-        containerName === s.serviceName.toLowerCase() ||
-        containerName.startsWith(`${s.serviceName.toLowerCase()}-`)
-      );
-      if (!service) return;
-
-      log(`[ServiceLifecycleService] container stopped | name=${containerName} | status=${status} | idx=${service.idx}`);
-
-      const statusMap: Record<string, 'Running' | 'Stopped' | 'Restart' | 'Deleted' | 'Removed'> = {
-        running: 'Running', stopped: 'Stopped', failed: 'Stopped', restarting: 'Restart', removed: 'Removed',
-      };
-      const mappedStatus = statusMap[status] ?? 'Stopped';
-      await this.prismaService.services.update({
-        where: { idx: service.idx },
-        data: { serviceStatus: mappedStatus, serviceLastOnline: new Date() },
-      });
-
-      if (mappedStatus !== 'Restart') {
-        this.hubEmit?.('service-status', { serviceIndex: service.idx, status: mappedStatus.toLowerCase() });
+      let serviceIdx: number | undefined;
+      for (const [idx, service] of this.trackedServices.entries()) {
+        if (this.containerBelongsToService(containerName, service.serviceName)) {
+          serviceIdx = idx;
+          break;
+        }
       }
+      if (serviceIdx === undefined) return;
+
+      const service = this.trackedServices.get(serviceIdx)!;
+      log(`[ServiceLifecycleService] container event | name=${containerName} | idx=${serviceIdx}`);
+      void this.syncContainerStatus(serviceIdx, service.serviceName, service.deployPreset);
     });
+  }
+
+  private containerBelongsToService(containerName: string, serviceName: string) {
+    const normalized = serviceName.toLowerCase();
+    return containerName === normalized || containerName.startsWith(`${normalized}-`);
+  }
+
+  private aggregateStatus(containers: ContainerState[], fallback: ContainerStatus = 'stopped') {
+    if (containers.length === 0) return fallback;
+    const statuses = containers.map(container => container.status);
+    if (statuses.some(status => status === 'failed')) return 'failed';
+    if (statuses.some(status => status === 'building')) return 'building';
+    if (statuses.some(status => status === 'starting')) return 'starting';
+    if (statuses.every(status => status === 'running')) return 'running';
+    if (statuses.every(status => status === 'stopped' || status === 'removed')) return 'stopped';
+    return 'starting';
+  }
+
+  private snapshotFromContainers(serviceIndex: number, containers: ContainerState[]): ContainerSnapshot {
+    return {
+      serviceIndex,
+      containers,
+      counts: {
+        running: containers.filter(container => container.status === 'running').length,
+        total: containers.length,
+      },
+    };
+  }
+
+  private emitSnapshot(snapshot: ContainerSnapshot) {
+    this.containerSnapshots.set(snapshot.serviceIndex, snapshot);
+    this.hubEmit?.('container-status', snapshot);
+  }
+
+  emitExpectedContainers(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, services: string[]) {
+    this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
+    const containers = services.length > 0
+      ? services.map(service => ({ name: service, service, status: 'building' as ContainerStatus }))
+      : [{ name: serviceName.toLowerCase(), status: 'building' as ContainerStatus }];
+    this.emitSnapshot(this.snapshotFromContainers(serviceIndex, containers));
+  }
+
+  async syncContainerStatus(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, fallback: ContainerStatus = 'stopped') {
+    this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
+    const containers = await this.dockerService.getContainerSnapshot(serviceName.toLowerCase(), deployPreset);
+    const snapshot = this.snapshotFromContainers(serviceIndex, containers);
+    this.emitSnapshot(snapshot);
+    if (containers.length > 0 || fallback === 'removed') {
+      this.hubEmit?.('service-status', { serviceIndex, status: this.aggregateStatus(containers, fallback) });
+    }
+    return snapshot;
+  }
+
+  getContainerSnapshot(serviceIndex: number): ContainerSnapshot | null {
+    return this.containerSnapshots.get(serviceIndex) ?? null;
+  }
+
+  initContainerStates(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION) {
+    this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
+    const snapshot = this.snapshotFromContainers(serviceIndex, [{ name: serviceName.toLowerCase(), status: 'building' }]);
+    this.emitSnapshot(snapshot);
+  }
+
+  clearContainerStates(serviceIndex: number) {
+    const snapshot = this.snapshotFromContainers(serviceIndex, []);
+    this.containerSnapshots.set(serviceIndex, snapshot);
+    this.hubEmit?.('container-status', snapshot);
+    this.hubEmit?.('service-status', { serviceIndex, status: 'removed' });
   }
 
   async fetchJSON(request: RouteRequest) {
@@ -84,6 +162,7 @@ export class ServiceLifecycleService implements OnModuleInit {
       stopped: 'Stopped',
       failed: 'Stopped',
       building: 'Running',
+      starting: 'Restart',
       removed: 'Removed',
     };
     const mapped = statusMap[status] ?? 'Stopped';
@@ -114,17 +193,27 @@ export class ServiceLifecycleService implements OnModuleInit {
 
   async v1RedeployService(
     request: DeployCommand,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.dockerService.redeployService(request, emit);
+    const success = await this.dockerService.redeployService(request, emit, (services) => {
+      this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
+    });
+    if (success) {
+      await this.syncContainerStatus(request.serviceIndex, request.serviceName, request.deployPreset);
+    }
     return request;
   }
 
   async v1DeployService(
     request: DeployCommand,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.dockerService.deployNewService(request, emit);
+    const success = await this.dockerService.deployNewService(request, emit, (services) => {
+      this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
+    });
+    if (success) {
+      await this.syncContainerStatus(request.serviceIndex, request.serviceName, request.deployPreset);
+    }
     return request;
   }
 

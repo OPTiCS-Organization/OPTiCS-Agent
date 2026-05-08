@@ -80,6 +80,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
       switch (payload.command) {
         case COMMAND.DEPLOY:
+          this.serviceLifecycleService.initContainerStates(payload.serviceIndex, payload.serviceName.toLowerCase(), payload.deployPreset);
           response = await this.serviceLifecycleService.v1DeployService(
             {
               apiKey: '',
@@ -96,7 +97,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             },
             (event: string, emitPayload: unknown) => {
               this.socket.emit(event, emitPayload);
-              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string; containers?: unknown };
               const idx: number = p.serviceIndex;
               if (event === 'service-status' && typeof p.status === 'string') {
                 const status: string = p.status;
@@ -112,6 +113,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           );
           break;
         case COMMAND.REDEPLOY:
+          this.serviceLifecycleService.initContainerStates(payload.serviceIndex, payload.serviceName.toLowerCase(), payload.deployPreset);
           response = await this.serviceLifecycleService.v1RedeployService(
             {
               apiKey: '',
@@ -128,7 +130,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             },
             (event: string, emitPayload: unknown) => {
               this.socket.emit(event, emitPayload);
-              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string; containers?: unknown };
               const idx: number = p.serviceIndex;
               if (event === 'service-status' && typeof p.status === 'string') {
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${idx}\n  Status        : ${p.status}`);
@@ -144,6 +146,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           break;
         case COMMAND.START: {
           const startIdx = Number(payload.serviceIndex);
+          await this.serviceLifecycleService.syncContainerStatus(startIdx, payload.serviceName, payload.deployPreset);
           await this.serviceLifecycleService.v1StartService(
             payload.serviceName,
             payload.deployPreset,
@@ -162,10 +165,12 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
+          await this.serviceLifecycleService.syncContainerStatus(startIdx, payload.serviceName, payload.deployPreset, 'starting');
           break;
         }
         case COMMAND.STOP: {
           const stopIdx = Number(payload.serviceIndex);
+          await this.serviceLifecycleService.syncContainerStatus(stopIdx, payload.serviceName, payload.deployPreset);
           await this.serviceLifecycleService.v1StopService(
             payload.serviceName,
             payload.deployPreset,
@@ -184,6 +189,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
+          await this.serviceLifecycleService.syncContainerStatus(stopIdx, payload.serviceName, payload.deployPreset);
           break;
         }
         case COMMAND.ABORT:
@@ -191,6 +197,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           break;
         case COMMAND.DELETE: {
           const deleteIdx = Number(payload.serviceIndex);
+          await this.serviceLifecycleService.syncContainerStatus(deleteIdx, payload.serviceName, payload.deployPreset);
           await this.serviceLifecycleService.v1DeleteService(
             payload.serviceName,
             deleteIdx,
@@ -209,6 +216,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
+          this.serviceLifecycleService.clearContainerStates(deleteIdx);
           break;
         }
         case COMMAND.DISCONNECT:
@@ -218,6 +226,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
         case COMMAND.STREAM_LOG: {
           const streamIdx: number = Number(payload.serviceIndex);
           const streamName: string = String(payload.serviceName);
+          const snapshot = this.serviceLifecycleService.getContainerSnapshot(streamIdx);
+          if (snapshot) {
+            this.socket.emit('container-status', snapshot);
+          }
           await this.serviceLifecycleService.streamServiceLog(
             streamIdx,
             streamName,
@@ -228,6 +240,16 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${streamIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${line}`);
             },
           );
+          break;
+        }
+        case COMMAND.SYNC_CONTAINER_STATUS: {
+          const syncIdx = Number(payload.serviceIndex);
+          const snapshot = await this.serviceLifecycleService.syncContainerStatus(
+            syncIdx,
+            String(payload.serviceName),
+            payload.deployPreset,
+          );
+          this.socket.emit('container-status', snapshot);
           break;
         }
         case COMMAND.STOP_LOG: {
