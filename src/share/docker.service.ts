@@ -408,6 +408,83 @@ export class DockerService implements OnModuleInit {
     }
   }
 
+  private async resolveComposeContainerTarget(containerName: string): Promise<{ projectName: string; serviceName: string }> {
+    const fallback = containerName.toLowerCase();
+    try {
+      const inspect = await this.docker.getContainer(containerName).inspect() as { Config?: { Labels?: Record<string, string> } };
+      const labels = inspect.Config?.Labels ?? {};
+      return {
+        projectName: labels['com.docker.compose.project'] ?? fallback,
+        serviceName: labels['com.docker.compose.service'] ?? fallback,
+      };
+    } catch {
+      return { projectName: fallback, serviceName: fallback };
+    }
+  }
+
+  async startContainer(
+    containerName: string,
+    deployPreset: DEPLOY_OPTION,
+    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+  ) {
+    const sendLog = (line: string) => emit('service-log', { serviceName: containerName, log: line, timestamp: new Date().toISOString() });
+    const sendStatus = (status: string) => emit('service-status', { serviceName: containerName, status });
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
+
+    try {
+      sendStatus('starting');
+      sendLog(`Starting container '${containerName}'...`);
+      if (isCompose) {
+        const { projectName, serviceName } = await this.resolveComposeContainerTarget(containerName);
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', '-p', projectName, 'start', serviceName]);
+          proc.stderr.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose start exited with code ${code}`)));
+        });
+      } else {
+        await this.docker.getContainer(containerName).start();
+      }
+      sendStatus('running');
+      sendLog(`Container '${containerName}' started successfully.`);
+      log(`[DockerService] startContainer success | name=${containerName}`);
+    } catch (e) {
+      sendStatus('failed');
+      sendLog(`ERROR: ${String(e)}`);
+      log(`[DockerService] startContainer failed | name=${containerName} | ${String(e)}`);
+    }
+  }
+
+  async stopContainer(
+    containerName: string,
+    deployPreset: DEPLOY_OPTION,
+    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+  ) {
+    const sendLog = (line: string) => emit('service-log', { serviceName: containerName, log: line, timestamp: new Date().toISOString() });
+    const sendStatus = (status: string) => emit('service-status', { serviceName: containerName, status });
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
+
+    try {
+      sendLog(`Stopping container '${containerName}'...`);
+      if (isCompose) {
+        const { projectName, serviceName } = await this.resolveComposeContainerTarget(containerName);
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', '-p', projectName, 'stop', serviceName]);
+          proc.stderr.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose stop exited with code ${code}`)));
+        });
+      } else {
+        await this.docker.getContainer(containerName).stop();
+      }
+      sendStatus('stopped');
+      sendLog(`Container '${containerName}' stopped successfully.`);
+      log(`[DockerService] stopContainer success | name=${containerName}`);
+    } catch (e) {
+      sendStatus('failed');
+      sendLog(`ERROR: ${String(e)}`);
+      log(`[DockerService] stopContainer failed | name=${containerName} | ${String(e)}`);
+    }
+  }
+
   async restartService(
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
@@ -437,6 +514,38 @@ export class DockerService implements OnModuleInit {
       sendStatus('failed');
       sendLog(`ERROR: ${String(e)}`);
       log(`[DockerService] restartService failed | name=${si} | ${String(e)}`);
+    }
+  }
+
+  async restartContainer(
+    containerName: string,
+    deployPreset: DEPLOY_OPTION,
+    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+  ) {
+    const sendLog = (line: string) => emit('service-log', { serviceName: containerName, log: line, timestamp: new Date().toISOString() });
+    const sendStatus = (status: string) => emit('service-status', { serviceName: containerName, status });
+    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
+
+    try {
+      sendStatus('restarting');
+      sendLog(`Restarting container '${containerName}'...`);
+      if (isCompose) {
+        const { projectName, serviceName } = await this.resolveComposeContainerTarget(containerName);
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('docker', ['compose', '-p', projectName, 'restart', serviceName]);
+          proc.stderr.on('data', (chunk: Buffer) => sendLog(chunk.toString().trim()));
+          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose restart exited with code ${code}`)));
+        });
+      } else {
+        await this.docker.getContainer(containerName).restart();
+      }
+      sendStatus('running');
+      sendLog(`Container '${containerName}' restarted successfully.`);
+      log(`[DockerService] restartContainer success | name=${containerName}`);
+    } catch (e) {
+      sendStatus('failed');
+      sendLog(`ERROR: ${String(e)}`);
+      log(`[DockerService] restartContainer failed | name=${containerName} | ${String(e)}`);
     }
   }
 

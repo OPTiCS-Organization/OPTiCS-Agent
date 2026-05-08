@@ -10,6 +10,7 @@ import { PrismaService } from './share/prisma.service';
 import { NotifyService } from './notify/notify.service';
 import type { ConnectRequestPayload } from './notify/notify.service';
 import { NotifyGateway } from './notify/notify.gateway';
+import { DockerService } from './share/docker.service';
 
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
@@ -22,6 +23,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly prismaService: PrismaService,
     private readonly notifyService: NotifyService,
     private readonly notifyGateway: NotifyGateway,
+    private readonly dockerService: DockerService,
   ) { }
 
   async onModuleInit() {
@@ -190,6 +192,84 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             },
           );
           await this.serviceLifecycleService.syncContainerStatus(stopIdx, payload.serviceName, payload.deployPreset);
+          break;
+        }
+        case COMMAND.CONTAINER_START: {
+          const svcIdx = Number(payload.serviceIndex);
+          const containerName = String(payload.containerName ?? '');
+          if (!containerName) break;
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.dockerService.startContainer(
+            containerName,
+            payload.deployPreset,
+            (event: string, emitPayload: unknown) => {
+              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              if (event === 'service-status' && typeof p.status === 'string') {
+                this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
+                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
+                this.serviceGateway.pushStatus(svcIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                const timestamp = p.timestamp ?? new Date().toISOString();
+                this.socket.emit(event, { serviceIndex: svcIdx, log: p.log, timestamp });
+                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${svcIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
+                this.serviceGateway.pushLog(svcIdx, p.log, timestamp);
+              }
+            },
+          );
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset, 'starting');
+          break;
+        }
+        case COMMAND.CONTAINER_STOP: {
+          const svcIdx = Number(payload.serviceIndex);
+          const containerName = String(payload.containerName ?? '');
+          if (!containerName) break;
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.dockerService.stopContainer(
+            containerName,
+            payload.deployPreset,
+            (event: string, emitPayload: unknown) => {
+              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              if (event === 'service-status' && typeof p.status === 'string') {
+                this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
+                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
+                this.serviceGateway.pushStatus(svcIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                const timestamp = p.timestamp ?? new Date().toISOString();
+                this.socket.emit(event, { serviceIndex: svcIdx, log: p.log, timestamp });
+                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${svcIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
+                this.serviceGateway.pushLog(svcIdx, p.log, timestamp);
+              }
+            },
+          );
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          break;
+        }
+        case COMMAND.CONTAINER_RESTART: {
+          const svcIdx = Number(payload.serviceIndex);
+          const containerName = String(payload.containerName ?? '');
+          if (!containerName) break;
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.dockerService.restartContainer(
+            containerName,
+            payload.deployPreset,
+            (event: string, emitPayload: unknown) => {
+              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              if (event === 'service-status' && typeof p.status === 'string') {
+                this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
+                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
+                this.serviceGateway.pushStatus(svcIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
+              } else if (event === 'service-log' && typeof p.log === 'string') {
+                const timestamp = p.timestamp ?? new Date().toISOString();
+                this.socket.emit(event, { serviceIndex: svcIdx, log: p.log, timestamp });
+                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${svcIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
+                this.serviceGateway.pushLog(svcIdx, p.log, timestamp);
+              }
+            },
+          );
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset, 'starting');
           break;
         }
         case COMMAND.ABORT:

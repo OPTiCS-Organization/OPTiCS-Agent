@@ -13,6 +13,7 @@ export class Command {
   servicePort: number;
   serviceHostPort?: number;
   serviceContainerPort?: number;
+  containerName?: string;
   serviceVersion: string;
 
   env: Record<string, string>;
