@@ -95,7 +95,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
     this.socket.on('register', async (payload: { agentCode: string, agentUuid: string, agentIp: string }) => {
       log(`[TunnelService] {{ cyan : bold : REGISTER:RECEIVED }}\n  Agent Code : ${payload.agentCode}\n  Agent UUID : ${payload.agentUuid}\n  Agent IP   : ${payload.agentIp}`)
-      if (this.agentUuid && this.agentUuid !== payload.agentUuid) {
+      if (this.agentUuid !== payload.agentUuid) {
         this.agentUuid = payload.agentUuid;
         log(`[TunnelService] {{ yellow : bold : AGENT:UUID_UPDATED }}\n  Agent UUID : ${this.agentUuid}`);
       }

@@ -49,7 +49,7 @@ export class DockerService implements OnModuleInit {
   private docker: Docker;
   private statusEmit: StatusEmit | null = null;
 
-  private readonly buildRoot = path.join(__dirname, '../build');
+  private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
 
   constructor(
     private readonly configService: ConfigService,
@@ -135,7 +135,7 @@ export class DockerService implements OnModuleInit {
   }
 
   private listComposeContainers(projectName: string): ContainerSnapshot[] {
-    const buildDir = path.join(__dirname, '../build', projectName);
+    const buildDir = path.join(this.buildRoot, projectName);
     if (fs.existsSync(buildDir)) {
       const composeResult = spawnSync(
         'docker',
@@ -821,7 +821,7 @@ export class DockerService implements OnModuleInit {
         }
       }
       if (deleteScope === 'service') {
-        this.removeBuildDir(path.join(__dirname, '../build', si), sendLog);
+        this.removeBuildDir(path.join(this.buildRoot, si), sendLog);
       }
       sendStatus('removed');
       sendLog(`Service '${si}' deleted successfully.`);
@@ -870,9 +870,9 @@ export class DockerService implements OnModuleInit {
       }
 
       // 기존 빌드 디렉토리 제거
-      this.removeBuildDir(path.join(__dirname, '../build', name), sendLog);
+      this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
 
-      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', name), sendLog);
+      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, name), sendLog);
       const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
       if (buildDir !== clonedDir) {
         sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
@@ -945,7 +945,7 @@ export class DockerService implements OnModuleInit {
       if (composeBuildDir) {
         await this.downComposeProject(name, composeBuildDir, sendLog);
       }
-      this.removeBuildDir(path.join(__dirname, '../build', name), sendLog);
+      this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);
@@ -1018,8 +1018,8 @@ export class DockerService implements OnModuleInit {
     try {
       sendStatus('building');
       sendLog(`Creating new Service '${name}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
-      this.removeBuildDir(path.join(__dirname, '../build', name), sendLog);
-      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(__dirname, '../build', name), sendLog);
+      this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
+      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, name), sendLog);
       const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
       if (buildDir !== clonedDir) {
         sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
@@ -1092,7 +1092,7 @@ export class DockerService implements OnModuleInit {
       if (composeBuildDir) {
         await this.downComposeProject(name, composeBuildDir, sendLog);
       }
-      this.removeBuildDir(path.join(__dirname, '../build', name), sendLog);
+      this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);
