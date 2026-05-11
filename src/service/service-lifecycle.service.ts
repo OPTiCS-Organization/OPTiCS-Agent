@@ -1,12 +1,12 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DeployCommand } from './dtos/DeployCommand.dto';
-import { DockerService } from 'src/share/docker.service';
+import { DockerLogEntry, DockerLogProgress, DockerService, DockerStatusEvent } from 'src/share/docker.service';
 import { RouteRequest } from 'src/global/types/RouteRequest.dto';
 import { PrismaService } from 'src/share/prisma.service';
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 import log from 'spectra-log';
 
-type HubEmit = (event: 'service-status' | 'service-log' | 'container-status', payload: object) => void;
+type HubEmit = (event: 'service-status' | 'service-log' | 'service-log-markers' | 'container-status', payload: object) => void;
 
 export interface ContainerState {
   name: string;
@@ -27,6 +27,14 @@ export interface ContainerSnapshot {
   };
 }
 
+export interface ServiceLogSessionMarker {
+  serviceIndex: number;
+  serviceName: string;
+  containerName: string;
+  event: string;
+  timestamp: string;
+}
+
 @Injectable()
 export class ServiceLifecycleService implements OnModuleInit {
   private hubEmit: HubEmit | null = null;
@@ -43,11 +51,8 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   onModuleInit() {
-    this.dockerService.registerStatusEmit((raw: string) => {
-      // raw 형식: "status:containerName"
-      const colonIdx = raw.indexOf(':');
-      const containerName = raw.slice(colonIdx + 1);
-
+    this.dockerService.registerStatusEmit((event: DockerStatusEvent) => {
+      const containerName = event.containerName;
       let serviceIdx: number | undefined;
       for (const [idx, service] of this.trackedServices.entries()) {
         if (this.containerBelongsToService(containerName, service.serviceName)) {
@@ -60,6 +65,42 @@ export class ServiceLifecycleService implements OnModuleInit {
       const service = this.trackedServices.get(serviceIdx)!;
       log(`[ServiceLifecycleService] container event | name=${containerName} | idx=${serviceIdx}`);
       void this.syncContainerStatus(serviceIdx, service.serviceName, service.deployPreset);
+    });
+  }
+
+  async createServiceSessionMarker(serviceIndex: number, serviceName: string, event: 'service-deploy' | 'service-redeploy' | 'service-start') {
+    const timestamp = new Date();
+    const duplicate = await this.prismaService.serviceLogSessionMarker.findFirst({
+      where: {
+        serviceIndex,
+        containerName: serviceName,
+        event,
+        timestamp: {
+          gte: new Date(timestamp.getTime() - 2000),
+          lte: new Date(timestamp.getTime() + 2000),
+        },
+      },
+    });
+    if (duplicate) return;
+
+    const marker = await this.prismaService.serviceLogSessionMarker.create({
+      data: {
+        serviceIndex,
+        serviceName,
+        containerName: serviceName,
+        event,
+        timestamp,
+      },
+    });
+    this.hubEmit?.('service-log-markers', {
+      serviceIndex,
+      markers: [{
+        serviceIndex: marker.serviceIndex,
+        serviceName: marker.serviceName,
+        containerName: marker.containerName,
+        event: marker.event,
+        timestamp: marker.timestamp.toISOString(),
+      }],
     });
   }
 
@@ -172,9 +213,54 @@ export class ServiceLifecycleService implements OnModuleInit {
     });
   }
 
-  async streamServiceLog(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, onLog: (line: string) => void): Promise<void> {
+  async streamServiceLog(
+    serviceIndex: number,
+    serviceName: string,
+    deployPreset: DEPLOY_OPTION,
+    onLog: (entry: DockerLogEntry) => void,
+    onProgress?: (progress: DockerLogProgress) => void,
+  ): Promise<void> {
     log(`[ServiceLifecycleService] streamServiceLog | serviceIndex=${serviceIndex} | name=${serviceName}`);
-    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog);
+    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog, onProgress);
+  }
+
+  loadOlderServiceLogs(serviceName: string, deployPreset: DEPLOY_OPTION, before: string, limit?: number): DockerLogEntry[] {
+    return this.dockerService.loadOlderContainerLogs(serviceName.toLowerCase(), deployPreset, before, limit);
+  }
+
+  async loadRecentSessionMarkers(serviceIndex: number, limit = 1000): Promise<ServiceLogSessionMarker[]> {
+    const markers = await this.prismaService.serviceLogSessionMarker.findMany({
+      where: { serviceIndex },
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+    });
+
+    return markers.reverse().map(marker => ({
+      serviceIndex: marker.serviceIndex,
+      serviceName: marker.serviceName,
+      containerName: marker.containerName,
+      event: marker.event,
+      timestamp: marker.timestamp.toISOString(),
+    }));
+  }
+
+  async loadOlderSessionMarkers(serviceIndex: number, before: string, limit = 1000): Promise<ServiceLogSessionMarker[]> {
+    const markers = await this.prismaService.serviceLogSessionMarker.findMany({
+      where: {
+        serviceIndex,
+        timestamp: { lt: new Date(before) },
+      },
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+    });
+
+    return markers.reverse().map(marker => ({
+      serviceIndex: marker.serviceIndex,
+      serviceName: marker.serviceName,
+      containerName: marker.containerName,
+      event: marker.event,
+      timestamp: marker.timestamp.toISOString(),
+    }));
   }
 
   stopServiceLog(serviceName: string): void {
@@ -185,10 +271,21 @@ export class ServiceLifecycleService implements OnModuleInit {
     serviceName: string,
     serviceIndex: number,
     deployPreset: DEPLOY_OPTION,
+    deleteScope: 'containers' | 'service',
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.deleteService(serviceName, deployPreset, emit);
-    await this.prismaService.services.deleteMany({ where: { idx: serviceIndex } });
+    await this.dockerService.deleteService(serviceName, deployPreset, deleteScope, emit);
+    await this.prismaService.serviceLogSessionMarker.deleteMany({ where: { serviceIndex } });
+
+    if (deleteScope === 'service') {
+      await this.prismaService.services.deleteMany({ where: { idx: serviceIndex } });
+      return;
+    }
+
+    await this.prismaService.services.updateMany({
+      where: { idx: serviceIndex },
+      data: { serviceStatus: 'Removed', serviceLastOnline: new Date() },
+    });
   }
 
   async v1RedeployService(

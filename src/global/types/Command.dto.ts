@@ -14,6 +14,9 @@ export class Command {
   serviceHostPort?: number;
   serviceContainerPort?: number;
   containerName?: string;
+  before?: string;
+  limit?: number;
+  deleteScope?: 'containers' | 'service';
   serviceVersion: string;
 
   env: Record<string, string>;

@@ -26,6 +26,17 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly dockerService: DockerService,
   ) { }
 
+  private getServiceCommandPayload(payload: Command) {
+    const serviceIndex = Number(payload.serviceIndex);
+    const serviceName = typeof payload.serviceName === 'string' ? payload.serviceName : '';
+    const deployPreset = payload.deployPreset;
+    if (!Number.isInteger(serviceIndex) || serviceIndex < 1 || !serviceName || !deployPreset) {
+      log(`[TunnelService] {{ red : bold : CMD:INVALID }}\n  Command       : ${payload.command}\n  Service Index : ${payload.serviceIndex ?? '-'}\n  Service Name  : ${payload.serviceName ?? '-'}\n  Preset        : ${payload.deployPreset ?? '-'}`);
+      return null;
+    }
+    return { serviceIndex, serviceName, deployPreset };
+  }
+
   async onModuleInit() {
     const hubUrl = process.env.HUB_URL ?? 'http://localhost:3000';
 
@@ -82,6 +93,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
       switch (payload.command) {
         case COMMAND.DEPLOY:
+          await this.serviceLifecycleService.createServiceSessionMarker(payload.serviceIndex, payload.serviceName, 'service-deploy');
           this.serviceLifecycleService.initContainerStates(payload.serviceIndex, payload.serviceName.toLowerCase(), payload.deployPreset);
           response = await this.serviceLifecycleService.v1DeployService(
             {
@@ -115,6 +127,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           );
           break;
         case COMMAND.REDEPLOY:
+          await this.serviceLifecycleService.createServiceSessionMarker(payload.serviceIndex, payload.serviceName, 'service-redeploy');
           this.serviceLifecycleService.initContainerStates(payload.serviceIndex, payload.serviceName.toLowerCase(), payload.deployPreset);
           response = await this.serviceLifecycleService.v1RedeployService(
             {
@@ -147,11 +160,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           );
           break;
         case COMMAND.START: {
-          const startIdx = Number(payload.serviceIndex);
-          await this.serviceLifecycleService.syncContainerStatus(startIdx, payload.serviceName, payload.deployPreset);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: startIdx, serviceName, deployPreset } = commandPayload;
+          await this.serviceLifecycleService.createServiceSessionMarker(startIdx, serviceName, 'service-start');
+          await this.serviceLifecycleService.syncContainerStatus(startIdx, serviceName, deployPreset);
           await this.serviceLifecycleService.v1StartService(
-            payload.serviceName,
-            payload.deployPreset,
+            serviceName,
+            deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -167,15 +183,17 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(startIdx, payload.serviceName, payload.deployPreset, 'starting');
+          await this.serviceLifecycleService.syncContainerStatus(startIdx, serviceName, deployPreset, 'starting');
           break;
         }
         case COMMAND.STOP: {
-          const stopIdx = Number(payload.serviceIndex);
-          await this.serviceLifecycleService.syncContainerStatus(stopIdx, payload.serviceName, payload.deployPreset);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: stopIdx, serviceName, deployPreset } = commandPayload;
+          await this.serviceLifecycleService.syncContainerStatus(stopIdx, serviceName, deployPreset);
           await this.serviceLifecycleService.v1StopService(
-            payload.serviceName,
-            payload.deployPreset,
+            serviceName,
+            deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -191,17 +209,19 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(stopIdx, payload.serviceName, payload.deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(stopIdx, serviceName, deployPreset);
           break;
         }
         case COMMAND.CONTAINER_START: {
-          const svcIdx = Number(payload.serviceIndex);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: svcIdx, serviceName, deployPreset } = commandPayload;
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
           await this.dockerService.startContainer(
             containerName,
-            payload.deployPreset,
+            deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -217,17 +237,19 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset, 'starting');
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset, 'starting');
           break;
         }
         case COMMAND.CONTAINER_STOP: {
-          const svcIdx = Number(payload.serviceIndex);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: svcIdx, serviceName, deployPreset } = commandPayload;
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
           await this.dockerService.stopContainer(
             containerName,
-            payload.deployPreset,
+            deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -243,17 +265,19 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
           break;
         }
         case COMMAND.CONTAINER_RESTART: {
-          const svcIdx = Number(payload.serviceIndex);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: svcIdx, serviceName, deployPreset } = commandPayload;
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
           await this.dockerService.restartContainer(
             containerName,
-            payload.deployPreset,
+            deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -269,19 +293,22 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, payload.serviceName, payload.deployPreset, 'starting');
+          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset, 'starting');
           break;
         }
         case COMMAND.ABORT:
           log(`[TunnelService] {{ gray : bold : CMD:IGNORED }}\n  Command       : ${payload.command}\n  Service Index : ${payload.serviceIndex ?? '-'}\n  Service Name  : ${payload.serviceName ?? '-'}\n  Preset        : ${payload.deployPreset ?? '-'}`);
           break;
         case COMMAND.DELETE: {
-          const deleteIdx = Number(payload.serviceIndex);
-          await this.serviceLifecycleService.syncContainerStatus(deleteIdx, payload.serviceName, payload.deployPreset);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: deleteIdx, serviceName, deployPreset } = commandPayload;
+          await this.serviceLifecycleService.syncContainerStatus(deleteIdx, serviceName, deployPreset);
           await this.serviceLifecycleService.v1DeleteService(
-            payload.serviceName,
+            serviceName,
             deleteIdx,
-            payload.deployPreset,
+            deployPreset,
+            payload.deleteScope === 'service' ? 'service' : 'containers',
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -304,30 +331,62 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           this.socket.disconnect();
           break;
         case COMMAND.STREAM_LOG: {
-          const streamIdx: number = Number(payload.serviceIndex);
-          const streamName: string = String(payload.serviceName);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: streamIdx, serviceName: streamName, deployPreset } = commandPayload;
           const snapshot = this.serviceLifecycleService.getContainerSnapshot(streamIdx);
           if (snapshot) {
             this.socket.emit('container-status', snapshot);
           }
+          const markers = await this.serviceLifecycleService.loadRecentSessionMarkers(streamIdx);
+          this.socket.emit('service-log-markers', { serviceIndex: streamIdx, markers });
           await this.serviceLifecycleService.streamServiceLog(
             streamIdx,
             streamName,
-            payload.deployPreset,
-            (line: string) => {
-              const timestamp = new Date().toISOString();
+            deployPreset,
+            ({ line, timestamp: logTimestamp }) => {
+              const timestamp = logTimestamp ?? new Date().toISOString();
               this.socket.emit('service-log', { serviceIndex: streamIdx, log: line, timestamp });
               log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${streamIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${line}`);
+            },
+            (progress) => {
+              this.socket.emit('log-load-progress', { serviceIndex: streamIdx, ...progress });
             },
           );
           break;
         }
+        case COMMAND.LOAD_OLDER_LOG: {
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload || !payload.before) break;
+          const { serviceIndex: historyIdx, serviceName, deployPreset } = commandPayload;
+          const logs = this.serviceLifecycleService.loadOlderServiceLogs(
+            serviceName,
+            deployPreset,
+            payload.before,
+            Number(payload.limit ?? 1000),
+          );
+          const markers = await this.serviceLifecycleService.loadOlderSessionMarkers(
+            historyIdx,
+            payload.before,
+            Number(payload.limit ?? 1000),
+          );
+          this.socket.emit('service-log-history', {
+            serviceIndex: historyIdx,
+            before: payload.before,
+            logs,
+            markers,
+            hasMore: logs.length >= Number(payload.limit ?? 1000),
+          });
+          break;
+        }
         case COMMAND.SYNC_CONTAINER_STATUS: {
-          const syncIdx = Number(payload.serviceIndex);
+          const commandPayload = this.getServiceCommandPayload(payload);
+          if (!commandPayload) break;
+          const { serviceIndex: syncIdx, serviceName, deployPreset } = commandPayload;
           const snapshot = await this.serviceLifecycleService.syncContainerStatus(
             syncIdx,
-            String(payload.serviceName),
-            payload.deployPreset,
+            serviceName,
+            deployPreset,
           );
           this.socket.emit('container-status', snapshot);
           break;

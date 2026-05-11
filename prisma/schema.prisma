@@ -27,6 +27,18 @@ model Services {
   serviceLastOnline DateTime
 }
 
+model ServiceLogSessionMarker {
+  idx           Int      @id @default(autoincrement())
+  serviceIndex  Int
+  serviceName   String
+  containerName String
+  event         String
+  timestamp     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([serviceIndex, timestamp])
+}
+
 model CpuUsage {
   idx       Int      @id @default(autoincrement())
   timestamp BigInt // Unix timestamp in milliseconds
