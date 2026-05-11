@@ -2,6 +2,14 @@ import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Injectable } from '@nestjs/common';
 import { Server } from 'socket.io';
 
+type ServiceLogMeta = {
+  source?: 'hub' | 'agent' | 'runtime';
+  stream?: 'deploy' | 'lifecycle' | 'runtime';
+  containerName?: string;
+  composeService?: string;
+  stderr?: boolean;
+};
+
 @Injectable()
 @WebSocketGateway({ namespace: '/service', cors: { origin: true, credentials: true } })
 export class ServiceGateway {
@@ -12,7 +20,7 @@ export class ServiceGateway {
     this.server.emit('service-status', { serviceIndex, status });
   }
 
-  pushLog(serviceIndex: number, line: string, timestamp: string) {
-    this.server.emit('service-log', { serviceIndex, log: line, timestamp });
+  pushLog(serviceIndex: number, line: string, timestamp: string, meta: ServiceLogMeta = {}) {
+    this.server.emit('service-log', { serviceIndex, log: line, timestamp, ...meta });
   }
 }

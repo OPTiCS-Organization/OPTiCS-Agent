@@ -12,6 +12,18 @@ import type { ConnectRequestPayload } from './notify/notify.service';
 import { NotifyGateway } from './notify/notify.gateway';
 import { DockerService } from './share/docker.service';
 
+type ServiceLogPayload = {
+  serviceIndex?: number;
+  serviceName?: string;
+  log?: string;
+  timestamp?: string;
+  source?: 'hub' | 'agent' | 'runtime';
+  stream?: 'deploy' | 'lifecycle' | 'runtime';
+  containerName?: string;
+  composeService?: string;
+  stderr?: boolean;
+};
+
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
   private socket!: Socket;
@@ -35,6 +47,28 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     return { serviceIndex, serviceName, deployPreset };
+  }
+
+  private logMeta(payload: ServiceLogPayload) {
+    return {
+      source: payload.source,
+      stream: payload.stream,
+      containerName: payload.containerName,
+      composeService: payload.composeService,
+      stderr: payload.stderr,
+    };
+  }
+
+  private emitServiceLog(serviceIndex: number, payload: ServiceLogPayload, forwardToHub = true) {
+    if (typeof payload.log !== 'string') return;
+
+    const timestamp = payload.timestamp ?? new Date().toISOString();
+    const meta = this.logMeta(payload);
+    if (forwardToHub) {
+      this.socket.emit('service-log', { serviceIndex, log: payload.log, timestamp, ...meta });
+    }
+    log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${serviceIndex}\n  Timestamp     : ${timestamp}\n  Source        : ${payload.source ?? '-'}\n  Stream        : ${payload.stream ?? '-'}\n  Container     : ${payload.containerName ?? payload.composeService ?? '-'}\n  Log           : ${payload.log}`);
+    this.serviceGateway.pushLog(serviceIndex, payload.log, timestamp, meta);
   }
 
   async onModuleInit() {
@@ -111,17 +145,15 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             },
             (event: string, emitPayload: unknown) => {
               this.socket.emit(event, emitPayload);
-              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string; containers?: unknown };
+              const p = emitPayload as ServiceLogPayload & { serviceIndex: number; status?: string; containers?: unknown };
               const idx: number = p.serviceIndex;
               if (event === 'service-status' && typeof p.status === 'string') {
                 const status: string = p.status;
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${idx}\n  Status        : ${status}`);
                 this.serviceGateway.pushStatus(idx, status);
                 void this.serviceLifecycleService.updateServiceStatus(idx, status).catch((e: unknown) => log(e));
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${idx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(idx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(idx, p, false);
               }
             },
           );
@@ -145,16 +177,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             },
             (event: string, emitPayload: unknown) => {
               this.socket.emit(event, emitPayload);
-              const p = emitPayload as { serviceIndex: number; status?: string; log?: string; timestamp?: string; containers?: unknown };
+              const p = emitPayload as ServiceLogPayload & { serviceIndex: number; status?: string; containers?: unknown };
               const idx: number = p.serviceIndex;
               if (event === 'service-status' && typeof p.status === 'string') {
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${idx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(idx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(idx, p.status).catch((e: unknown) => log(e));
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${idx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(idx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(idx, p, false);
               }
             },
           );
@@ -169,17 +199,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             serviceName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
-              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
                 this.socket.emit(event, { serviceIndex: startIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${startIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(startIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(startIdx, p.status);
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                this.socket.emit(event, { serviceIndex: startIdx, log: p.log, timestamp });
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${startIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(startIdx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(startIdx, p);
               }
             },
           );
@@ -195,17 +222,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             serviceName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
-              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
                 this.socket.emit(event, { serviceIndex: stopIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${stopIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(stopIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(stopIdx, p.status);
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                this.socket.emit(event, { serviceIndex: stopIdx, log: p.log, timestamp });
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${stopIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(stopIdx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(stopIdx, p);
               }
             },
           );
@@ -223,17 +247,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
-              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
                 this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(svcIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                this.socket.emit(event, { serviceIndex: svcIdx, log: p.log, timestamp });
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${svcIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(svcIdx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(svcIdx, p);
               }
             },
           );
@@ -251,17 +272,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
-              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
                 this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(svcIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                this.socket.emit(event, { serviceIndex: svcIdx, log: p.log, timestamp });
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${svcIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(svcIdx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(svcIdx, p);
               }
             },
           );
@@ -279,17 +297,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
-              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
                 this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(svcIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                this.socket.emit(event, { serviceIndex: svcIdx, log: p.log, timestamp });
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${svcIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(svcIdx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(svcIdx, p);
               }
             },
           );
@@ -310,16 +325,13 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             deployPreset,
             payload.deleteScope === 'service' ? 'service' : 'containers',
             (event: string, emitPayload: unknown) => {
-              const p = emitPayload as { serviceName: string; status?: string; log?: string; timestamp?: string };
+              const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
                 this.socket.emit(event, { serviceIndex: deleteIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${deleteIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(deleteIdx, p.status);
-              } else if (event === 'service-log' && typeof p.log === 'string') {
-                const timestamp = p.timestamp ?? new Date().toISOString();
-                this.socket.emit(event, { serviceIndex: deleteIdx, log: p.log, timestamp });
-                log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${deleteIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${p.log}`);
-                this.serviceGateway.pushLog(deleteIdx, p.log, timestamp);
+              } else if (event === 'service-log') {
+                this.emitServiceLog(deleteIdx, p);
               }
             },
           );
@@ -344,10 +356,16 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             streamIdx,
             streamName,
             deployPreset,
-            ({ line, timestamp: logTimestamp }) => {
-              const timestamp = logTimestamp ?? new Date().toISOString();
-              this.socket.emit('service-log', { serviceIndex: streamIdx, log: line, timestamp });
-              log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${streamIdx}\n  Timestamp     : ${timestamp}\n  Log           : ${line}`);
+            ({ line, timestamp: logTimestamp, source, stream, containerName, composeService, stderr }) => {
+              this.emitServiceLog(streamIdx, {
+                log: line,
+                timestamp: logTimestamp,
+                source,
+                stream,
+                containerName,
+                composeService,
+                stderr,
+              });
             },
             (progress) => {
               this.socket.emit('log-load-progress', { serviceIndex: streamIdx, ...progress });
