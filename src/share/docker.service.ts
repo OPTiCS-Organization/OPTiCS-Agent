@@ -245,16 +245,15 @@ export class DockerService implements OnModuleInit {
       const proc = spawn('docker', ['compose', '-p', containerName, 'logs', '--follow', '--tail', '0', '--timestamps'], {});
       this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
-        this.outputLines(chunk).forEach(line => onLog({
-          ...this.parseDockerLogLine(line, containerName),
-          source: 'runtime',
-          stream: 'runtime',
-        }));
+        this.outputLines(chunk).forEach(line => {
+          const entry = this.runtimeLogEntry(line, containerName);
+          if (entry) onLog(entry);
+        });
       });
       proc.stderr.on('data', (chunk: Buffer) => {
         this.outputLines(chunk).forEach(line => {
-          const parsed = this.parseDockerLogLine(line, containerName);
-          onLog({ ...parsed, source: 'runtime', stream: 'runtime', line: `ERROR: ${parsed.line}`, stderr: true });
+          const entry = this.runtimeLogEntry(line, containerName, true);
+          if (entry) onLog(entry);
         });
       });
       proc.on('close', () => {
@@ -268,17 +267,15 @@ export class DockerService implements OnModuleInit {
       const proc = spawn('docker', ['logs', '--follow', '--tail', '0', '--timestamps', containerName], {});
       this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
-        this.outputLines(chunk).forEach(line => onLog({
-          ...this.parseDockerLogLine(line, containerName),
-          source: 'runtime',
-          stream: 'runtime',
-          containerName,
-        }));
+        this.outputLines(chunk).forEach(line => {
+          const entry = this.runtimeLogEntry(line, containerName);
+          if (entry) onLog(entry);
+        });
       });
       proc.stderr.on('data', (chunk: Buffer) => {
         this.outputLines(chunk).forEach(line => {
-          const parsed = this.parseDockerLogLine(line, containerName);
-          onLog({ ...parsed, source: 'runtime', stream: 'runtime', containerName, line: `ERROR: ${parsed.line}`, stderr: true });
+          const entry = this.runtimeLogEntry(line, containerName, true);
+          if (entry) onLog(entry);
         });
       });
       proc.on('close', () => {
@@ -300,13 +297,16 @@ export class DockerService implements OnModuleInit {
     const stdout = result.stdout
       .split('\n')
       .filter(line => line.trim())
-      .map(line => ({ ...this.parseDockerLogLine(line, containerName), source: 'runtime' as const, stream: 'runtime' as const }));
+      .flatMap(line => {
+        const entry = this.runtimeLogEntry(line, containerName);
+        return entry ? [entry] : [];
+      });
     const stderr = result.stderr
       .split('\n')
       .filter(line => line.trim())
-      .map(line => {
-        const parsed = this.parseDockerLogLine(line, containerName);
-        return { ...parsed, source: 'runtime' as const, stream: 'runtime' as const, line: `ERROR: ${parsed.line}`, stderr: true };
+      .flatMap(line => {
+        const entry = this.runtimeLogEntry(line, containerName, true);
+        return entry ? [entry] : [];
       });
 
     if (result.status !== 0 && stdout.length === 0 && stderr.length === 0) {
@@ -333,13 +333,16 @@ export class DockerService implements OnModuleInit {
     const stdout = result.stdout
       .split('\n')
       .filter(line => line.trim())
-      .map(line => ({ ...this.parseDockerLogLine(line, containerName), source: 'runtime' as const, stream: 'runtime' as const }));
+      .flatMap(line => {
+        const entry = this.runtimeLogEntry(line, containerName);
+        return entry ? [entry] : [];
+      });
     const stderr = result.stderr
       .split('\n')
       .filter(line => line.trim())
-      .map(line => {
-        const parsed = this.parseDockerLogLine(line, containerName);
-        return { ...parsed, source: 'runtime' as const, stream: 'runtime' as const, line: `ERROR: ${parsed.line}`, stderr: true };
+      .flatMap(line => {
+        const entry = this.runtimeLogEntry(line, containerName, true);
+        return entry ? [entry] : [];
       });
 
     if (result.status !== 0 && stdout.length === 0 && stderr.length === 0) {
@@ -371,16 +374,34 @@ export class DockerService implements OnModuleInit {
     });
   }
 
+  private runtimeLogEntry(line: string, defaultContainerName?: string, stderr = false): DockerLogEntry | null {
+    const parsed = this.parseDockerLogLine(line, defaultContainerName);
+    if (!parsed.line.trim()) return null;
+
+    return {
+      ...parsed,
+      source: 'runtime',
+      stream: 'runtime',
+      line: stderr ? `ERROR: ${parsed.line}` : parsed.line,
+      stderr: stderr || undefined,
+    };
+  }
+
   private parseDockerLogLine(line: string, defaultContainerName?: string): DockerLogEntry {
     const cleanLine = this.stripAnsi(line).trim();
     const timestampPattern = '(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})';
-    const match = cleanLine.match(new RegExp(`^(?:(.*?)\\s+\\|\\s*)?${timestampPattern}\\s+(.*)$`));
+    const match = cleanLine.match(new RegExp(`^(?:(.*?)\\s+\\|\\s*)?${timestampPattern}(?:\\s+(.*))?$`));
     if (!match) {
       const composeLine = cleanLine.match(/^([^|\s]+)\s+\|\s*(.*)$/);
       if (composeLine) {
         const [, prefix, message] = composeLine;
         const containerName = prefix.trim();
-        return { line: message, containerName, composeService: this.composeServiceName(containerName) };
+        const nested = this.parseDockerLogLine(message, containerName);
+        return {
+          ...nested,
+          containerName: nested.containerName ?? containerName,
+          composeService: nested.composeService ?? this.composeServiceName(containerName),
+        };
       }
 
       const composeEvent = cleanLine.match(/^([A-Za-z0-9_.-]+-\d+)\s+(exited with code .*|Killed|Aborted|Terminated)$/);
@@ -392,7 +413,7 @@ export class DockerService implements OnModuleInit {
       return { line: cleanLine, containerName: defaultContainerName };
     }
 
-    const [, prefix, base, fraction = '', zone, message] = match;
+    const [, prefix, base, fraction = '', zone, message = ''] = match;
     const milliseconds = fraction ? fraction.slice(0, 4).padEnd(4, '0') : '';
     const timestamp = new Date(`${base}${milliseconds}${zone}`).toISOString();
     const containerName = prefix?.trim() || defaultContainerName;
