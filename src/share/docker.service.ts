@@ -51,6 +51,21 @@ export class DockerService implements OnModuleInit {
 
   private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
 
+  // ServiceForm의 컨테이너 포트 입력값을 PORT 환경변수로 자동 주입하여
+  // compose 파일이 ${PORT:-...} 컨벤션을 따를 때 정상 동작하게 한다.
+  // 사용자가 env에 PORT를 직접 명시했다면 그것을 우선한다.
+  private writeComposeEnvFile(buildDir: string, data: DeployCommand): void {
+    const userEnv = data.env ?? {};
+    const containerPort = data.serviceContainerPort ?? data.servicePort;
+    const finalEnv: Record<string, string> = { ...userEnv };
+    if (containerPort !== undefined && finalEnv.PORT === undefined) {
+      finalEnv.PORT = String(containerPort);
+    }
+    if (Object.keys(finalEnv).length === 0) return;
+    const envContent = Object.entries(finalEnv).map(([k, v]) => `${k}=${v}`).join('\n');
+    fs.writeFileSync(path.join(buildDir, '.env'), envContent);
+  }
+
   // 에이전트 자기 자신용 환경변수가 자식 docker compose 프로세스로 누출되어
   // 사용자 compose 파일의 ${VAR} 치환을 오염시키는 것을 방지한다.
   private subprocessEnv(): NodeJS.ProcessEnv {
@@ -940,10 +955,7 @@ export class DockerService implements OnModuleInit {
       if (hasCompose) {
         sendLog('Detected docker-compose, starting build...');
         composeBuildDir = buildDir;
-        if (data.env) {
-          const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
-          fs.writeFileSync(path.join(buildDir, '.env'), envContent);
-        }
+        this.writeComposeEnvFile(buildDir, data);
         const services = this.writeNoRestartOverride(buildDir, sendLog);
         onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
@@ -1087,10 +1099,7 @@ export class DockerService implements OnModuleInit {
       if (hasCompose) {
         sendLog('Detected docker-compose, starting build...');
         composeBuildDir = buildDir;
-        if (data.env) {
-          const envContent = Object.entries(data.env).map(([k, v]) => `${k}=${v}`).join('\n');
-          fs.writeFileSync(path.join(buildDir, '.env'), envContent);
-        }
+        this.writeComposeEnvFile(buildDir, data);
         const services = this.writeNoRestartOverride(buildDir, sendLog);
         onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
