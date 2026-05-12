@@ -51,6 +51,29 @@ export class DockerService implements OnModuleInit {
 
   private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
 
+  // 에이전트 자기 자신용 환경변수가 자식 docker compose 프로세스로 누출되어
+  // 사용자 compose 파일의 ${VAR} 치환을 오염시키는 것을 방지한다.
+  private subprocessEnv(): NodeJS.ProcessEnv {
+    const reserved = new Set([
+      'PORT',
+      'SERVER_PORT',
+      'HUB_URL',
+      'CENTRAL_SERVER_URL',
+      'OPTICS_SOURCE_URL',
+      'REMOTE_DOCKER_HOST',
+      'REMOTE_DOCKER_PORT',
+      'DATABASE_URL',
+      'CORS_ORIGIN',
+    ]);
+    const cleaned: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (!reserved.has(key) && !key.startsWith('OPTICS_')) {
+        cleaned[key] = value;
+      }
+    }
+    return cleaned;
+  }
+
   constructor(
     private readonly configService: ConfigService,
   ) {
@@ -194,7 +217,7 @@ export class DockerService implements OnModuleInit {
     if (!fs.existsSync(cwd)) return;
     sendLog(`[DockerService] Cleaning up failed compose project '${projectName}'...`);
     await new Promise<void>((resolve) => {
-      const proc = spawn('docker', ['compose', '-p', projectName, 'down', '--remove-orphans'], { cwd });
+      const proc = spawn('docker', ['compose', '-p', projectName, 'down', '--remove-orphans'], { cwd, env: this.subprocessEnv() });
       proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
       proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
       proc.on('close', () => resolve());
@@ -818,7 +841,7 @@ export class DockerService implements OnModuleInit {
           const args = deleteScope === 'service'
             ? ['compose', '-p', si, 'down', '--rmi', 'all', '--volumes']
             : ['compose', '-p', si, 'down'];
-          const proc = spawn('docker', args);
+          const proc = spawn('docker', args, { env: this.subprocessEnv() });
           proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
           proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose down exited with code ${code}`)));
@@ -924,7 +947,7 @@ export class DockerService implements OnModuleInit {
         const services = this.writeNoRestartOverride(buildDir, sendLog);
         onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', name ?? data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir });
+          const proc = spawn('docker', ['compose', '-p', name ?? data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir, env: this.subprocessEnv() });
           proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
           proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
@@ -979,7 +1002,7 @@ export class DockerService implements OnModuleInit {
     try {
       const result = spawnSync(
         'docker', ['compose', 'config', '--services'],
-        { cwd: buildDir, encoding: 'utf8' },
+        { cwd: buildDir, encoding: 'utf8', env: this.subprocessEnv() },
       );
 
       if (result.status !== 0) {
@@ -1071,7 +1094,7 @@ export class DockerService implements OnModuleInit {
         const services = this.writeNoRestartOverride(buildDir, sendLog);
         onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', name, 'up', '-d', '--build'], { cwd: buildDir });
+          const proc = spawn('docker', ['compose', '-p', name, 'up', '-d', '--build'], { cwd: buildDir, env: this.subprocessEnv() });
           proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
           proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
