@@ -11,6 +11,8 @@ import { NotifyService } from './notify/notify.service';
 import type { ConnectRequestPayload } from './notify/notify.service';
 import { NotifyGateway } from './notify/notify.gateway';
 import { DockerService } from './share/docker.service';
+import { ConfigService } from '@nestjs/config';
+import { ReverseTunnelService } from './tunnel/reverse-tunnel.service';
 
 type ServiceLogPayload = {
   serviceIndex?: number;
@@ -28,6 +30,7 @@ type ServiceLogPayload = {
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
   private socket!: Socket;
   private agentUuid: string | undefined;
+  private hubUrl: string;
 
   constructor(
     private readonly serviceLifecycleService: ServiceLifecycleService,
@@ -36,7 +39,12 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly notifyService: NotifyService,
     private readonly notifyGateway: NotifyGateway,
     private readonly dockerService: DockerService,
-  ) { }
+    private readonly reverseTunnelService: ReverseTunnelService,
+    private readonly configService: ConfigService,
+  ) {
+    this.hubUrl = `${configService.getOrThrow<string>('HUB_URL')}:${configService.getOrThrow<string>('HUB_API_PORT')}`;
+    console.log(`hubUrl Set: ${this.hubUrl}`);
+  }
 
   private getServiceCommandPayload(payload: Command) {
     const serviceIndex = Number(payload.serviceIndex);
@@ -72,13 +80,12 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-    const hubUrl = process.env.HUB_URL ?? 'http://localhost:3000';
 
     this.agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } }).then(result => result?.value)
     if (this.agentUuid) log(`[TunnelService] {{ green : bold : AGENT:UUID_FOUND }}\n  Agent UUID : ${this.agentUuid}`);
     else log(`[TunnelService] {{ yellow : bold : AGENT:UUID_MISSING }}`);
 
-    this.socket = io(`${hubUrl}/agent`, {
+    this.socket = io(`${this.hubUrl}/agent`, {
       reconnection: true,
       reconnectionDelay: 3000,
       auth: { agentUuid: this.agentUuid ?? null },
@@ -89,7 +96,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.socket.on('connect', () => {
-      log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${hubUrl}\n  Socket ID : ${this.socket.id}`);
+      log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${this.hubUrl}\n  Socket ID : ${this.socket.id}`);
       this.socket.emit('register', { agentUuid: this.agentUuid ?? null });
     });
 
@@ -430,6 +437,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       log(`[TunnelService] {{ magenta : bold : REVERSE_PROXY:REQUEST }}\n  Target Service : ${payload.targetServiceName}\n  Path           : ${payload.path}`);
       const response = await this.serviceLifecycleService.fetchJSON(payload);
       this.socket.emit('response', response);
+    });
+
+    this.socket.on('tunnel-connect', (payload: { token: string, service_port: number, tunnel_port: number }) => {
+      this.reverseTunnelService.open({ servicePort: payload.service_port, token: payload.token, tunnelPort: payload.tunnel_port })
     });
   }
 

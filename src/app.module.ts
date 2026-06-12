@@ -8,6 +8,7 @@ import { TunnelService } from './tunnel.service';
 import { ServiceModule } from './service/service.module';
 import { SharedModule } from './share/shared.module';
 import { NotifyModule } from './notify/notify.module';
+import { TunnelModule } from './tunnel/tunnel.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { NotifyModule } from './notify/notify.module';
     ServiceModule,
     SharedModule,
     NotifyModule,
+    TunnelModule,
   ],
   controllers: [AppController],
   providers: [AppService, InfoGateway, TunnelService],
