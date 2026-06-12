@@ -17,10 +17,13 @@ const AGENT_UUID_KEY = 'agent-uuid';
 
 @Injectable()
 export class NotifyService {
+  hubUrl: string = '';
   constructor(
     private readonly prismaService: PrismaService,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    this.hubUrl = `${configService.getOrThrow<string>('HUB_URL')}:${configService.getOrThrow<string>('HUB_API_PORT')}`;
+  }
 
   async savePendingRequest(payload: ConnectRequestPayload): Promise<void> {
     await this.prismaService.agentInfo.upsert({
@@ -55,10 +58,9 @@ export class NotifyService {
     });
     if (!agentUuidRow) throw new Error('Agent uuid not found.');
 
-    const hubUrl = this.configService.get<string>('HUB_URL');
     const endpoint = accept ? 'accept' : 'reject';
 
-    await fetch(`${hubUrl}/v1/agent/connect/${endpoint}`, {
+    await fetch(`${this.hubUrl}/v1/agent/connect/${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
