@@ -42,7 +42,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly reverseTunnelService: ReverseTunnelService,
     private readonly configService: ConfigService,
   ) {
-    this.hubUrl = `${configService.getOrThrow<string>('HUB_URL')}:${configService.getOrThrow<string>('HUB_API_PORT')}`;
+    this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}`;
     console.log(`hubUrl Set: ${this.hubUrl}`);
   }
 

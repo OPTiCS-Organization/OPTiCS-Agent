@@ -10,7 +10,7 @@ export class ReverseTunnelService {
   constructor(
     private readonly configService: ConfigService,
   ) { 
-    this.hubUrl = new URL(configService.getOrThrow<string>('HUB_URL')).hostname;
+    this.hubUrl = new URL(configService.getOrThrow<string>('HUB_TUNNEL_URL')).hostname;
   };
 
   open(payload: { servicePort: number, token: string, tunnelPort: number }) {
