@@ -22,7 +22,7 @@ export class NotifyService {
     private readonly prismaService: PrismaService,
     private readonly configService: ConfigService,
   ) {
-    this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}}`;
+    this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}`;
   }
 
   async savePendingRequest(payload: ConnectRequestPayload): Promise<void> {
