@@ -219,9 +219,10 @@ export class ServiceLifecycleService implements OnModuleInit {
     deployPreset: DEPLOY_OPTION,
     onLog: (entry: DockerLogEntry) => void,
     onProgress?: (progress: DockerLogProgress) => void,
+    onHistory?: (entries: DockerLogEntry[]) => void,
   ): Promise<void> {
     log(`[ServiceLifecycleService] streamServiceLog | serviceIndex=${serviceIndex} | name=${serviceName}`);
-    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog, onProgress);
+    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog, onProgress, onHistory);
   }
 
   loadOlderServiceLogs(serviceName: string, deployPreset: DEPLOY_OPTION, before: string, limit?: number): DockerLogEntry[] {

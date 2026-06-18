@@ -377,6 +377,13 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (progress) => {
               this.socket.emit('log-load-progress', { serviceIndex: streamIdx, ...progress });
             },
+            (entries) => {
+              this.socket.emit('service-log-history', {
+                serviceIndex: streamIdx,
+                logs: entries,
+                hasMore: true,
+              });
+            },
           );
           break;
         }

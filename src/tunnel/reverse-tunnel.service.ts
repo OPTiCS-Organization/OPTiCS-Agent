@@ -9,7 +9,7 @@ export class ReverseTunnelService {
   hubUrl: string;
   constructor(
     private readonly configService: ConfigService,
-  ) { 
+  ) {
     this.hubUrl = new URL(configService.getOrThrow<string>('HUB_TUNNEL_URL')).hostname;
   };
 

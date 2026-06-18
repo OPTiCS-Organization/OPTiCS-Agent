@@ -43,6 +43,9 @@ export type DockerLogProgress = {
   phase: 'loading' | 'streaming' | 'complete';
 };
 
+// 초기 히스토리를 줄 단위 service-log 대신 묶음(service-log-history)으로 전송할 때의 배치 크기.
+const HISTORY_BATCH_SIZE = 2000;
+
 @Global()
 @Injectable()
 export class DockerService implements OnModuleInit {
@@ -248,6 +251,7 @@ export class DockerService implements OnModuleInit {
     deployPreset: DEPLOY_OPTION,
     onLog: (entry: DockerLogEntry) => void,
     onProgress?: (progress: DockerLogProgress) => void,
+    onHistory?: (entries: DockerLogEntry[]) => void,
   ): Promise<void> {
     if (this.logStreams.has(containerName)) {
       this.stopContainerLog(containerName);
@@ -265,18 +269,16 @@ export class DockerService implements OnModuleInit {
       onProgress?.({ loaded, total, percent, phase });
     };
 
-    emitProgress(0, historicalLogs.length, 'loading');
-    historicalLogs.forEach((entry, index) => {
-      onLog(entry);
-      emitProgress(index + 1, historicalLogs.length, 'loading');
-    });
-    emitProgress(historicalLogs.length, historicalLogs.length, 'complete');
-    onProgress?.({
-      loaded: historicalLogs.length,
-      total: historicalLogs.length,
-      percent: 100,
-      phase: 'streaming',
-    });
+    const total = historicalLogs.length;
+    emitProgress(0, total, 'loading');
+    for (let offset = 0; offset < total; offset += HISTORY_BATCH_SIZE) {
+      const batch = historicalLogs.slice(offset, offset + HISTORY_BATCH_SIZE);
+      if (onHistory) onHistory(batch);
+      else batch.forEach(onLog);
+      emitProgress(Math.min(offset + HISTORY_BATCH_SIZE, total), total, 'loading');
+    }
+    emitProgress(total, total, 'complete');
+    onProgress?.({ loaded: total, total, percent: 100, phase: 'streaming' });
 
     if (isCompose) {
       // Compose: historical logs are loaded above; follow only new lines from here.
