@@ -13,6 +13,7 @@ export type DockerStatusEvent = {
   containerName: string;
   timestamp: string;
   action: string;
+  exitCode?: string;
 };
 type StatusEmit = (event: DockerStatusEvent) => void | Promise<void>;
 type HubEmit = (event: 'service-status' | 'service-log' | 'container-status', payload: object) => void;
@@ -515,7 +516,7 @@ export class DockerService implements OnModuleInit {
               const exitCode = event.Actor.Attributes['exitCode'] ?? '0';
               const status = exitCode !== '0' ? 'failed' : 'stopped';
               log(`[DockerService] Stopping Container '${name}'...\nExit Code: ${exitCode}\nExit State: ${status}`);
-              void this.statusEmit({ status, containerName: name, timestamp, action });
+              void this.statusEmit({ status, containerName: name, timestamp, action, exitCode });
               break;
             }
             case 'create': {

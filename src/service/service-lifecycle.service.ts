@@ -64,7 +64,31 @@ export class ServiceLifecycleService implements OnModuleInit {
 
       const service = this.trackedServices.get(serviceIdx)!;
       log(`[ServiceLifecycleService] container event | name=${containerName} | idx=${serviceIdx}`);
+      this.emitContainerLifecycleLog(serviceIdx, event);
       void this.syncContainerStatus(serviceIdx, service.serviceName, service.deployPreset);
+    });
+  }
+
+  private emitContainerLifecycleLog(serviceIndex: number, event: DockerStatusEvent) {
+    const messageByStatus: Record<string, string> = {
+      failed: `Container '${event.containerName}' stopped unexpectedly${event.exitCode ? ` with exit code ${event.exitCode}` : ''}.`,
+      stopped: `Container '${event.containerName}' stopped.`,
+      removed: `Container '${event.containerName}' removed.`,
+      running: `Container '${event.containerName}' started.`,
+      starting: `Container '${event.containerName}' created.`,
+      restarting: `Container '${event.containerName}' restarting.`,
+    };
+    const line = messageByStatus[event.status];
+    if (!line) return;
+
+    this.hubEmit?.('service-log', {
+      serviceIndex,
+      log: line,
+      timestamp: event.timestamp,
+      source: 'agent',
+      stream: 'lifecycle',
+      containerName: event.containerName,
+      stderr: event.status === 'failed' || undefined,
     });
   }
 
