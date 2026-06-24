@@ -54,6 +54,7 @@ export class DockerService implements OnModuleInit {
   private statusEmit: StatusEmit | null = null;
 
   private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
+  private readonly preserveFailedDeployArtifacts = true;
 
   // ServiceForm의 컨테이너 포트 입력값을 PORT 환경변수로 자동 주입하여
   // compose 파일이 ${PORT:-...} 컨벤션을 따를 때 정상 동작하게 한다.
@@ -245,6 +246,22 @@ export class DockerService implements OnModuleInit {
         resolve();
       });
     });
+  }
+
+  private async cleanupFailedDeployment(
+    projectName: string,
+    composeBuildDir: string | null,
+    sendLog: (line: string) => void,
+  ) {
+    if (this.preserveFailedDeployArtifacts) {
+      sendLog('[DockerService] Failed deploy cleanup is temporarily disabled; leaving containers and build directory in place.');
+      return;
+    }
+
+    if (composeBuildDir) {
+      await this.downComposeProject(projectName, composeBuildDir, sendLog);
+    }
+    this.removeBuildDir(path.join(this.buildRoot, projectName), sendLog);
   }
 
   async streamContainerLog(
@@ -1001,10 +1018,7 @@ export class DockerService implements OnModuleInit {
       log('Redeploy success.');
       return true;
     } catch (error) {
-      if (composeBuildDir) {
-        await this.downComposeProject(name, composeBuildDir, sendLog);
-      }
-      this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
+      await this.cleanupFailedDeployment(name, composeBuildDir, sendLog);
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);
@@ -1145,10 +1159,7 @@ export class DockerService implements OnModuleInit {
       log('Success.');
       return true;
     } catch (error) {
-      if (composeBuildDir) {
-        await this.downComposeProject(name, composeBuildDir, sendLog);
-      }
-      this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
+      await this.cleanupFailedDeployment(name, composeBuildDir, sendLog);
       sendStatus('failed');
       sendLog(`ERROR: ${String(error)}`);
       log(error);
