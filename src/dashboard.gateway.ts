@@ -8,15 +8,13 @@ import { Injectable } from '@nestjs/common';
 import log from 'spectra-log';
 import { Server, Socket } from 'socket.io';
 
-interface CpuData {
-  timestamp: number;
+interface CpuMetric {
   peak: number;
   average: number;
   min: number;
 }
 
-interface MemoryData {
-  timestamp: number;
+interface MemoryMetric {
   peak: number;
   average: number;
   min: number;
@@ -28,7 +26,7 @@ interface MemoryData {
   namespace: '/info',
   cors: { origin: true, credentials: true },
 })
-export class InfoGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   private server!: Server;
 
@@ -40,7 +38,7 @@ export class InfoGateway implements OnGatewayConnection, OnGatewayDisconnect {
     log(`Agent Dashboard Disconnected.\n  {{ bold : dim : Dashboard ID: ${client.id} }}`)
   }
 
-  sendData(data: { cpu: CpuData; memory: MemoryData }) {
-    this.server.emit('info', data);
+  sendMetric(metric: { cpu: CpuMetric; memory: MemoryMetric }) {
+    this.server.emit('metric', metric);
   }
 }

@@ -25,6 +25,14 @@ type ContainerSnapshot = {
   exitCode?: number | null;
   health?: string | null;
 };
+type ServicePortMapping = {
+  hostPort: number;
+  containerPort: number;
+};
+type SourceRepository = {
+  url: string;
+  rootDirectory?: string | null;
+};
 type ExpectedServicesCallback = (services: string[]) => void;
 type LogStream = 'deploy' | 'lifecycle' | 'runtime';
 
@@ -61,7 +69,7 @@ export class DockerService implements OnModuleInit {
   // 사용자가 env에 PORT를 직접 명시했다면 그것을 우선한다.
   private writeComposeEnvFile(buildDir: string, data: DeployCommand): void {
     const userEnv = data.env ?? {};
-    const containerPort = data.serviceContainerPort ?? data.servicePort;
+    const containerPort = this.resolvePortMappings(data)[0]?.containerPort ?? data.serviceContainerPort ?? data.servicePort;
     const finalEnv: Record<string, string> = { ...userEnv };
     if (containerPort !== undefined && finalEnv.PORT === undefined) {
       finalEnv.PORT = String(containerPort);
@@ -92,6 +100,52 @@ export class DockerService implements OnModuleInit {
       }
     }
     return cleaned;
+  }
+
+  private resolvePortMappings(data: Pick<DeployCommand, 'servicePort' | 'serviceHostPort' | 'serviceContainerPort' | 'servicePortMappings'>): ServicePortMapping[] {
+    const mappings = Array.isArray(data.servicePortMappings)
+      ? data.servicePortMappings
+        .map(mapping => ({
+          hostPort: Number(mapping.hostPort),
+          containerPort: Number(mapping.containerPort),
+        }))
+        .filter(mapping =>
+          Number.isInteger(mapping.hostPort) &&
+          Number.isInteger(mapping.containerPort) &&
+          mapping.hostPort >= 1 &&
+          mapping.hostPort <= 65535 &&
+          mapping.containerPort >= 1 &&
+          mapping.containerPort <= 65535
+        )
+      : [];
+
+    if (mappings.length > 0) return mappings;
+    return [{
+      hostPort: data.serviceHostPort ?? data.servicePort,
+      containerPort: data.serviceContainerPort ?? data.servicePort,
+    }];
+  }
+
+  private normalizeSourceRepositories(sourceUrl: DeployCommand['sourceUrl']): SourceRepository[] {
+    const rawEntries = Array.isArray(sourceUrl) ? sourceUrl : [sourceUrl];
+    return rawEntries.map((entry) => {
+      if (typeof entry === 'string') {
+        return { url: entry, rootDirectory: null };
+      }
+      return {
+        url: String(entry.url ?? ''),
+        rootDirectory: this.normalizeRootDirectory(entry.rootDirectory),
+      };
+    }).filter(entry => entry.url);
+  }
+
+  private normalizeRootDirectory(rootDirectory: string | null | undefined): string | null {
+    const value = rootDirectory?.trim().replace(/^\/+/, '') ?? '';
+    return value || null;
+  }
+
+  private primaryRootDirectory(data: DeployCommand): string | null {
+    return this.normalizeSourceRepositories(data.sourceUrl)[0]?.rootDirectory ?? this.normalizeRootDirectory(data.rootDirectory);
   }
 
   constructor(
@@ -631,11 +685,12 @@ export class DockerService implements OnModuleInit {
   }
 
   private async cloneAll(
-    sourceUrl: string | string[],
+    sourceUrl: DeployCommand['sourceUrl'],
     baseDir: string,
     sendLog: (line: string) => void,
   ): Promise<string> {
-    const urls = Array.isArray(sourceUrl) ? sourceUrl : [sourceUrl];
+    const sources = this.normalizeSourceRepositories(sourceUrl);
+    const urls = sources.map(source => source.url);
 
     if (urls.length === 1) {
       // 단일 URL: baseDir에 바로 클론
@@ -673,15 +728,16 @@ export class DockerService implements OnModuleInit {
   async runService(
     serviceName: string,
     serviceVersion: string,
-    hostPort: number,
-    containerPort: number,
+    portMappings: ServicePortMapping[],
     env?: Record<string, string>,
   ) {
     const portBindings: Record<string, { HostPort: string }[]> = {};
     const exposedPorts: Record<string, object> = {};
-    const key = `${containerPort}/tcp`;
-    portBindings[key] = [{ HostPort: String(hostPort) }];
-    exposedPorts[key] = {};
+    for (const mapping of portMappings) {
+      const key = `${mapping.containerPort}/tcp`;
+      portBindings[key] = [{ HostPort: String(mapping.hostPort) }];
+      exposedPorts[key] = {};
+    }
 
     const container = await this.docker.createContainer({
       Image: `${serviceName.toLowerCase()}:${serviceVersion}`,
@@ -952,9 +1008,10 @@ export class DockerService implements OnModuleInit {
       this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
 
       const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, name), sendLog);
-      const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
+      const rootDirectory = this.primaryRootDirectory(data);
+      const buildDir = this.resolveBuildContext(clonedDir, rootDirectory);
       if (buildDir !== clonedDir) {
-        sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
+        sendLog(`[DockerService] Using root directory: ${rootDirectory}`);
       }
       fs.chmodSync(buildDir, 0o755);
       fs.readdirSync(buildDir).forEach(file => {
@@ -1007,8 +1064,7 @@ export class DockerService implements OnModuleInit {
         await this.runService(
           data.serviceName,
           data.serviceVersion,
-          data.serviceHostPort ?? data.servicePort,
-          data.serviceContainerPort ?? data.servicePort,
+          this.resolvePortMappings(data),
           data.env,
         );
       }
@@ -1093,9 +1149,10 @@ export class DockerService implements OnModuleInit {
       sendLog(`Creating new Service '${name}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
       this.removeBuildDir(path.join(this.buildRoot, name), sendLog);
       const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, name), sendLog);
-      const buildDir = this.resolveBuildContext(clonedDir, data.rootDirectory);
+      const rootDirectory = this.primaryRootDirectory(data);
+      const buildDir = this.resolveBuildContext(clonedDir, rootDirectory);
       if (buildDir !== clonedDir) {
-        sendLog(`[DockerService] Using root directory: ${data.rootDirectory}`);
+        sendLog(`[DockerService] Using root directory: ${rootDirectory}`);
       }
       fs.chmodSync(buildDir, 0o755);
       fs.readdirSync(buildDir).forEach(file => {
@@ -1148,8 +1205,7 @@ export class DockerService implements OnModuleInit {
         await this.runService(
           data.serviceName,
           data.serviceVersion,
-          data.serviceHostPort ?? data.servicePort,
-          data.serviceContainerPort ?? data.servicePort,
+          this.resolvePortMappings(data),
           data.env,
         );
       }
