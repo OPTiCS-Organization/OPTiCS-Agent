@@ -67,6 +67,9 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /*
+   * 서비스에서 출력되는 로그를 Hub로 전송
+   */
   private emitServiceLog(serviceIndex: number, payload: ServiceLogPayload, forwardToHub = true) {
     if (typeof payload.log !== 'string') return;
 
@@ -80,7 +83,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-
+    /* 이미 서버에서 받아온 UUID가 있는지 조회 */
     this.agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } }).then(result => result?.value)
     if (this.agentUuid) log(`[TunnelService] {{ green : bold : AGENT:UUID_FOUND }}\n  Agent UUID : ${this.agentUuid}`);
     else log(`[TunnelService] {{ yellow : bold : AGENT:UUID_MISSING }}`);
@@ -91,15 +94,23 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       auth: { agentUuid: this.agentUuid ?? null },
     });
 
+    /**
+     * 서비스 라이프사이클 코드가 소켓 객체를 직접 몰라도 Hub에 emit할 수 있게 연결
+     */
     (this.serviceLifecycleService.registerHubEmit as (fn: (event: string, payload: object) => void) => void)((event, payload) => {
       this.socket.emit(event, payload);
     });
 
+    /* 허브와 소켓이 연결되면 연결 이벤트 발생, UUID를 같이 전송함. */
     this.socket.on('connect', () => {
       log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${this.hubUrl}\n  Socket ID : ${this.socket.id}`);
       this.socket.emit('register', { agentUuid: this.agentUuid ?? null });
     });
 
+    /*
+      허브에서 전송받은 UUID가 NULL이면 새 UUID, Code를 발급해서 register 이벤트를 발생시킴.
+      전송받은 UUID가 없으면? => 아마 아무 이벤트를 발생시키지 않는 듯
+    */
     this.socket.on('register', async (payload: { agentCode: string, agentUuid: string, agentIp: string }) => {
       log(`[TunnelService] {{ cyan : bold : REGISTER:RECEIVED }}\n  Agent Code : ${payload.agentCode}\n  Agent UUID : ${payload.agentUuid}\n  Agent IP   : ${payload.agentIp}`)
       if (this.agentUuid !== payload.agentUuid) {
@@ -145,6 +156,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               servicePort: payload.servicePort,
               serviceHostPort: payload.serviceHostPort,
               serviceContainerPort: payload.serviceContainerPort,
+              servicePortMappings: payload.servicePortMappings,
               sourceUrl: payload.sourceUrl,
               rootDirectory: payload.rootDirectory,
               serviceVersion: payload.serviceVersion,
@@ -177,6 +189,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               servicePort: payload.servicePort,
               serviceHostPort: payload.serviceHostPort,
               serviceContainerPort: payload.serviceContainerPort,
+              servicePortMappings: payload.servicePortMappings,
               sourceUrl: payload.sourceUrl,
               rootDirectory: payload.rootDirectory,
               serviceVersion: payload.serviceVersion,

@@ -1,25 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import log from 'spectra-log';
 import { PrismaService } from './share/prisma.service.js';
-import { InfoGateway } from './socket.gateway.js';
-import os from 'os-utils';
+import { DashboardGateway } from './dashboard.gateway.js';
+import { SystemMetricsUtility } from './utility/systemMetric.util.js';
 
 @Injectable()
 export class AppService {
-  private stack: number = 0;
-  private cpuMax: number = 0;
-  private cpuSum: number = 0;
-  private cpuMin: number = Infinity;
-  private memoryMax: number = 0;
-  private memorySum: number = 0;
-  private memoryMin: number = Infinity;
-
   constructor(
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly infoGateway: InfoGateway,
+    private readonly dashboardGateway: DashboardGateway,
+    private readonly systemMetricsUtility: SystemMetricsUtility,
   ) { }
 
   public async getAgentInfo() {
@@ -46,95 +39,41 @@ export class AppService {
   }
 
   @Cron('* * * * * *')
-  heartbeat() {
+  async heartbeat() {
+    await this.updatePerformance();
+  }
+
+  async updatePerformance() {
+    const metrics = this.systemMetricsUtility.getMetrics();
+
+    // 직전 구간에 표본이 하나도 없으면 저장/전송할 게 없다.
+    if (metrics.samples.cpu === 0 && metrics.samples.mem === 0) return;
+
     try {
-      os.cpuUsage((usage) =>
-        this.updatePerformance(usage * 100, os.totalmem() - os.freemem()),
-      );
+      const timestamp = BigInt(metrics.timestamp);
+      await this.prismaService.cpuUsage.create({
+        data: { timestamp, ...metrics.cpu },
+      });
+      await this.prismaService.memoryUsage.create({
+        data: { timestamp, ...metrics.mem },
+      });
+
+      const sevenDaysAgo = BigInt(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      await this.prismaService.cpuUsage.deleteMany({
+        where: { timestamp: { lt: sevenDaysAgo } },
+      });
+      await this.prismaService.memoryUsage.deleteMany({
+        where: { timestamp: { lt: sevenDaysAgo } },
+      });
     } catch (error) {
-      log(error, 500, 'ERROR');
+      Logger.error(error);
     }
-  }
 
-  async updatePerformance(cpuUsage: number, memoryUsage: number) {
-    this.stack++;
-    if (this.stack >= 5) {
-      const cpuData = {
-        timestamp: Date.now(),
-        peak: this.numberSlicer(this.cpuMax),
-        average: this.numberSlicer(this.cpuSum / 5),
-        min: this.numberSlicer(this.cpuMin),
-      };
-
-      // DB에 저장
-      try {
-        await this.prismaService.cpuUsage.create({
-          data: cpuData,
-        });
-
-        // 7일 이상 된 데이터 삭제
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        await this.prismaService.cpuUsage.deleteMany({
-          where: { timestamp: { lt: sevenDaysAgo } },
-        });
-      } catch (error) {
-        log(error, 500, 'ERROR');
-      }
-
-      // 메모리 데이터 저장 및 전송
-      const memoryData = {
-        timestamp: Date.now(),
-        peak: this.memoryMax,
-        average: this.memorySum / 5,
-        min: this.memoryMin,
-        totalMemory: os.totalmem(),
-      };
-
-      try {
-        await this.prismaService.memoryUsage.create({
-          data: memoryData,
-        });
-
-        // 7일 이상 된 데이터 삭제
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        await this.prismaService.memoryUsage.deleteMany({
-          where: { timestamp: { lt: sevenDaysAgo } },
-        });
-      } catch (error) {
-        log(error, 500, 'ERROR');
-      }
-
-      const info = {
-        cpu: cpuData,
-        memory: memoryData,
-      };
-
-      // WebSocket으로 메모리 데이터 전송
-      this.infoGateway.sendData(info);
-
-      this.cpuMax = 0;
-      this.cpuSum = 0;
-      this.cpuMin = Infinity;
-
-      this.memoryMax = 0;
-      this.memorySum = 0;
-      this.memoryMin = Infinity;
-
-      this.stack = 0;
-    }
-    this.cpuMax = Math.max(this.cpuMax, cpuUsage);
-    this.cpuSum += cpuUsage;
-    this.cpuMin = Math.min(this.cpuMin, cpuUsage);
-
-    this.memoryMax = Math.max(this.memoryMax, memoryUsage);
-    this.memorySum += memoryUsage;
-    this.memoryMin = Math.min(this.memoryMin, memoryUsage);
-  }
-
-  public numberSlicer(num: number) {
-    const parts = num.toString().split('.');
-    const integerPart = parseInt(parts[0]) || 0;
-    const decimalPart = parts[1] ? parseFloat('0.' + parts[1].slice(0, 2)) : 0;
-    return integerPart + decimalPart;
+    // WebSocket으로 CPU/메모리 데이터 전송
+    this.dashboardGateway.sendMetric({
+      cpu: metrics.cpu,
+      memory: metrics.mem,
+    });
   }
 }

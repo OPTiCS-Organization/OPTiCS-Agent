@@ -3,12 +3,13 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { InfoGateway } from './socket.gateway';
+import { DashboardGateway } from './dashboard.gateway';
 import { TunnelService } from './tunnel.service';
 import { ServiceModule } from './service/service.module';
 import { SharedModule } from './share/shared.module';
 import { NotifyModule } from './notify/notify.module';
 import { TunnelModule } from './tunnel/tunnel.module';
+import { UtilityModule } from './utility/utility.module';
 
 @Module({
   imports: [
@@ -18,8 +19,9 @@ import { TunnelModule } from './tunnel/tunnel.module';
     SharedModule,
     NotifyModule,
     TunnelModule,
+    UtilityModule,
   ],
   controllers: [AppController],
-  providers: [AppService, InfoGateway, TunnelService],
+  providers: [AppService, DashboardGateway, TunnelService],
 })
 export class AppModule {}
