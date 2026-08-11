@@ -38,12 +38,14 @@ export class SystemMetricsUtility implements OnModuleInit, OnModuleDestroy {
   private cpuMax = 0;
   private cpuMin = Infinity;
   private cpuSum = 0;
+  private currentCpuUsage = 0;
 
   private memSamples = 0;
   private memMax = 0;
   private memMin = Infinity;
   private memSum = 0;
   private totalMemory = 0;
+  private currentMemoryUsed = 0;
 
   onModuleInit() {
     this.cpuTimer = setInterval(() => this.collectCpu(), CPU_SAMPLE_INTERVAL_MS);
@@ -58,6 +60,7 @@ export class SystemMetricsUtility implements OnModuleInit, OnModuleDestroy {
   private collectCpu() {
     // cpuUsage는 1초 측정 후 콜백하므로, 측정이 끝난 시점에 카운트한다.
     os.cpuUsage((usage) => {
+      this.currentCpuUsage = usage;
       this.cpuMax = Math.max(this.cpuMax, usage);
       this.cpuMin = Math.min(this.cpuMin, usage);
       this.cpuSum += usage;
@@ -67,6 +70,7 @@ export class SystemMetricsUtility implements OnModuleInit, OnModuleDestroy {
 
   private collectMem() {
     const used = os.totalmem() - os.freemem();
+    this.currentMemoryUsed = used;
     this.memMax = Math.max(this.memMax, used);
     this.memMin = Math.min(this.memMin, used);
     this.memSum += used;
@@ -93,6 +97,23 @@ export class SystemMetricsUtility implements OnModuleInit, OnModuleDestroy {
     };
     this.reset();
     return metrics;
+  }
+
+  /** Hub Console에서 표시할 가장 최근 CPU/메모리 스냅샷을 반환한다. */
+  public getCurrentMetrics() {
+    const totalMemory = this.finite(this.totalMemory);
+    const usedMemory = this.finite(this.currentMemoryUsed);
+    return {
+      timestamp: Date.now(),
+      cpu: {
+        usage: this.finite(this.currentCpuUsage),
+      },
+      memory: {
+        used: usedMemory,
+        total: totalMemory,
+        usage: totalMemory > 0 ? numberSlicer(usedMemory / totalMemory) : 0,
+      },
+    };
   }
 
   /** 표본이 0이면 0으로 나누는 것을 막는다. */

@@ -10,6 +10,7 @@ import { SharedModule } from './share/shared.module';
 import { NotifyModule } from './notify/notify.module';
 import { TunnelModule } from './tunnel/tunnel.module';
 import { UtilityModule } from './utility/utility.module';
+import { SshTerminalService } from './terminal/ssh-terminal.service';
 
 @Module({
   imports: [
@@ -22,6 +23,6 @@ import { UtilityModule } from './utility/utility.module';
     UtilityModule,
   ],
   controllers: [AppController],
-  providers: [AppService, DashboardGateway, TunnelService],
+  providers: [AppService, DashboardGateway, TunnelService, SshTerminalService],
 })
 export class AppModule {}

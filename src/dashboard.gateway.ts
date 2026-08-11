@@ -9,12 +9,14 @@ import log from 'spectra-log';
 import { Server, Socket } from 'socket.io';
 
 interface CpuMetric {
+  timestamp: number;
   peak: number;
   average: number;
   min: number;
 }
 
 interface MemoryMetric {
+  timestamp: number;
   peak: number;
   average: number;
   min: number;
@@ -39,6 +41,6 @@ export class DashboardGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   sendMetric(metric: { cpu: CpuMetric; memory: MemoryMetric }) {
-    this.server.emit('metric', metric);
+    this.server.emit('info', metric);
   }
 }
