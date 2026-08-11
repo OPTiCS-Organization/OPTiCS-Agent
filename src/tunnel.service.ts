@@ -1,5 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { io, Socket } from 'socket.io-client';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import log from 'spectra-log';
 import { Command } from './global/types/Command.dto';
 import { RouteRequest } from './global/types/RouteRequest.dto';
@@ -13,6 +15,8 @@ import { NotifyGateway } from './notify/notify.gateway';
 import { DockerService } from './share/docker.service';
 import { ConfigService } from '@nestjs/config';
 import { ReverseTunnelService } from './tunnel/reverse-tunnel.service';
+import { SystemMetricsUtility } from './utility/systemMetric.util';
+import { SshTerminalService } from './terminal/ssh-terminal.service';
 
 type ServiceLogPayload = {
   serviceIndex?: number;
@@ -25,6 +29,18 @@ type ServiceLogPayload = {
   composeService?: string;
   stderr?: boolean;
 };
+
+/** dist/src에서 두 단계 위(프로젝트 루트)의 package.json을 읽어 빌드 없이도 버전을 항상 최신으로 유지한다. */
+function readAgentVersion(): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version?: string };
+    return pkg.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const AGENT_VERSION = readAgentVersion();
 
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
@@ -40,6 +56,8 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly notifyGateway: NotifyGateway,
     private readonly dockerService: DockerService,
     private readonly reverseTunnelService: ReverseTunnelService,
+    private readonly systemMetricsUtility: SystemMetricsUtility,
+    private readonly sshTerminalService: SshTerminalService,
     private readonly configService: ConfigService,
   ) {
     this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}`;
@@ -104,7 +122,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     /* 허브와 소켓이 연결되면 연결 이벤트 발생, UUID를 같이 전송함. */
     this.socket.on('connect', () => {
       log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${this.hubUrl}\n  Socket ID : ${this.socket.id}`);
-      this.socket.emit('register', { agentUuid: this.agentUuid ?? null });
+      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION });
     });
 
     /*
@@ -137,6 +155,38 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
     this.socket.on('disconnect', () => {
       log(`[TunnelService] {{ red : bold : SOCKET:DISCONNECTED }}`);
+    });
+
+    this.socket.on('system-metrics-request', (payload: { requestId: string }) => {
+      this.socket.emit('system-metrics', {
+        requestId: payload.requestId,
+        metrics: this.systemMetricsUtility.getCurrentMetrics(),
+      });
+    });
+
+    this.socket.on('terminal-open', (payload: { sessionId: string; cols: number; rows: number }) => {
+      this.sshTerminalService.open(
+        payload.sessionId,
+        { cols: payload.cols, rows: payload.rows },
+        {
+          onReady: () => this.socket.emit('terminal-ready', { sessionId: payload.sessionId }),
+          onData: (data) => this.socket.emit('terminal-output', { sessionId: payload.sessionId, data }),
+          onClose: (reason) => this.socket.emit('terminal-closed', { sessionId: payload.sessionId, reason }),
+        },
+      );
+    });
+
+    this.socket.on('terminal-input', (payload: { sessionId: string; data: string }) => {
+      if (typeof payload.data !== 'string' || Buffer.byteLength(payload.data) > 64 * 1024) return;
+      this.sshTerminalService.write(payload.sessionId, payload.data);
+    });
+
+    this.socket.on('terminal-resize', (payload: { sessionId: string; cols: number; rows: number }) => {
+      this.sshTerminalService.resize(payload.sessionId, payload.cols, payload.rows);
+    });
+
+    this.socket.on('terminal-close', (payload: { sessionId: string }) => {
+      this.sshTerminalService.close(payload.sessionId);
     });
 
     this.socket.on('command', async (payload: Command) => {

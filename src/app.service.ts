@@ -72,8 +72,8 @@ export class AppService {
 
     // WebSocket으로 CPU/메모리 데이터 전송
     this.dashboardGateway.sendMetric({
-      cpu: metrics.cpu,
-      memory: metrics.mem,
+      cpu: { timestamp: metrics.timestamp, ...metrics.cpu },
+      memory: { timestamp: metrics.timestamp, ...metrics.mem },
     });
   }
 }

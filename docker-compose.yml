@@ -8,6 +8,10 @@ services:
       - "optics-data:/app/data"
       - "optics-build:/app/dist/build"
       - "/var/run/docker.sock:/var/run/docker.sock"
+      - type: bind
+        source: "${HOST_SSH_PRIVATE_KEY_FILE:-/dev/null}"
+        target: /run/secrets/host_ssh_key
+        read_only: true
     networks:
       - service-network
     env_file: ./.env
