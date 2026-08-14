@@ -11,6 +11,7 @@ import { NotifyModule } from './notify/notify.module';
 import { TunnelModule } from './tunnel/tunnel.module';
 import { UtilityModule } from './utility/utility.module';
 import { SshTerminalService } from './terminal/ssh-terminal.service';
+import { DockerModule } from './docker/docker.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SshTerminalService } from './terminal/ssh-terminal.service';
     NotifyModule,
     TunnelModule,
     UtilityModule,
+    DockerModule,
   ],
   controllers: [AppController],
   providers: [AppService, DashboardGateway, TunnelService, SshTerminalService],
