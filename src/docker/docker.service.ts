@@ -8,6 +8,8 @@ import log from "spectra-log";
 import { DeployCommand } from "../service/dtos/DeployCommand.dto";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
 import { stripAnsi, subprocessEnv } from "./docker-cli";
+import { DockerLogEntry } from "./types/DockerLogEntry.type";
+import { runtimeLogEntry } from "./docker-log.parser";
 
 export type DockerStatusEvent = {
   status: string;
@@ -35,17 +37,7 @@ type SourceRepository = {
   rootDirectory?: string | null;
 };
 type ExpectedServicesCallback = (services: string[]) => void;
-type LogStream = 'deploy' | 'lifecycle' | 'runtime';
 
-export type DockerLogEntry = {
-  line: string;
-  timestamp?: string;
-  source?: 'agent' | 'runtime';
-  stream?: LogStream;
-  containerName?: string;
-  composeService?: string;
-  stderr?: boolean;
-};
 export type DockerLogProgress = {
   loaded: number;
   total: number;
@@ -335,13 +327,13 @@ export class DockerService implements OnModuleInit {
       this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
         this.outputLines(chunk).forEach(line => {
-          const entry = this.runtimeLogEntry(line, containerName);
+          const entry = runtimeLogEntry(line, containerName);
           if (entry) onLog(entry);
         });
       });
       proc.stderr.on('data', (chunk: Buffer) => {
         this.outputLines(chunk).forEach(line => {
-          const entry = this.runtimeLogEntry(line, containerName, true);
+          const entry = runtimeLogEntry(line, containerName, true);
           if (entry) onLog(entry);
         });
       });
@@ -357,13 +349,13 @@ export class DockerService implements OnModuleInit {
       this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
         this.outputLines(chunk).forEach(line => {
-          const entry = this.runtimeLogEntry(line, containerName);
+          const entry = runtimeLogEntry(line, containerName);
           if (entry) onLog(entry);
         });
       });
       proc.stderr.on('data', (chunk: Buffer) => {
         this.outputLines(chunk).forEach(line => {
-          const entry = this.runtimeLogEntry(line, containerName, true);
+          const entry = runtimeLogEntry(line, containerName, true);
           if (entry) onLog(entry);
         });
       });
@@ -387,14 +379,14 @@ export class DockerService implements OnModuleInit {
       .split('\n')
       .filter(line => line.trim())
       .flatMap(line => {
-        const entry = this.runtimeLogEntry(line, containerName);
+        const entry = runtimeLogEntry(line, containerName);
         return entry ? [entry] : [];
       });
     const stderr = result.stderr
       .split('\n')
       .filter(line => line.trim())
       .flatMap(line => {
-        const entry = this.runtimeLogEntry(line, containerName, true);
+        const entry = runtimeLogEntry(line, containerName, true);
         return entry ? [entry] : [];
       });
 
@@ -423,14 +415,14 @@ export class DockerService implements OnModuleInit {
       .split('\n')
       .filter(line => line.trim())
       .flatMap(line => {
-        const entry = this.runtimeLogEntry(line, containerName);
+        const entry = runtimeLogEntry(line, containerName);
         return entry ? [entry] : [];
       });
     const stderr = result.stderr
       .split('\n')
       .filter(line => line.trim())
       .flatMap(line => {
-        const entry = this.runtimeLogEntry(line, containerName, true);
+        const entry = runtimeLogEntry(line, containerName, true);
         return entry ? [entry] : [];
       });
 
@@ -463,58 +455,6 @@ export class DockerService implements OnModuleInit {
     });
   }
 
-  private runtimeLogEntry(line: string, defaultContainerName?: string, stderr = false): DockerLogEntry | null {
-    const parsed = this.parseDockerLogLine(line, defaultContainerName);
-    if (!parsed.line.trim()) return null;
-
-    return {
-      ...parsed,
-      source: 'runtime',
-      stream: 'runtime',
-      line: stderr ? `ERROR: ${parsed.line}` : parsed.line,
-      stderr: stderr || undefined,
-    };
-  }
-
-  private parseDockerLogLine(line: string, defaultContainerName?: string): DockerLogEntry {
-    const cleanLine = stripAnsi(line).trim();
-    const timestampPattern = '(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})';
-    const match = cleanLine.match(new RegExp(`^(?:(.*?)\\s+\\|\\s*)?${timestampPattern}(?:\\s+(.*))?$`));
-    if (!match) {
-      const composeLine = cleanLine.match(/^([^|\s]+)\s+\|\s*(.*)$/);
-      if (composeLine) {
-        const [, prefix, message] = composeLine;
-        const containerName = prefix.trim();
-        const nested = this.parseDockerLogLine(message, containerName);
-        return {
-          ...nested,
-          containerName: nested.containerName ?? containerName,
-          composeService: nested.composeService ?? this.composeServiceName(containerName),
-        };
-      }
-
-      const composeEvent = cleanLine.match(/^([A-Za-z0-9_.-]+-\d+)\s+(exited with code .*|Killed|Aborted|Terminated)$/);
-      if (composeEvent) {
-        const [, containerName, message] = composeEvent;
-        return { line: message, containerName, composeService: this.composeServiceName(containerName) };
-      }
-
-      return { line: cleanLine, containerName: defaultContainerName };
-    }
-
-    const [, prefix, base, fraction = '', zone, message = ''] = match;
-    const milliseconds = fraction ? fraction.slice(0, 4).padEnd(4, '0') : '';
-    const timestamp = new Date(`${base}${milliseconds}${zone}`).toISOString();
-    const containerName = prefix?.trim() || defaultContainerName;
-    const composeService = containerName ? this.composeServiceName(containerName) : undefined;
-
-    return { line: message, timestamp, containerName, composeService };
-  }
-
-
-  private composeServiceName(containerName: string): string {
-    return containerName.replace(/-\d+$/, '');
-  }
 
   stopContainerLog(containerName: string): void {
     const stream = this.logStreams.get(containerName);

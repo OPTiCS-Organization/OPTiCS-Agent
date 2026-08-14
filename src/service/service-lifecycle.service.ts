@@ -1,10 +1,11 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DeployCommand } from './dtos/DeployCommand.dto';
-import { DockerLogEntry, DockerLogProgress, DockerService, DockerStatusEvent } from 'src/docker/docker.service';
+import { DockerLogProgress, DockerService, DockerStatusEvent } from 'src/docker/docker.service';
 import { RouteRequest } from 'src/global/types/RouteRequest.dto';
 import { PrismaService } from 'src/share/prisma.service';
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 import log from 'spectra-log';
+import { DockerLogEntry } from 'src/docker/types/DockerLogEntry.type';
 
 type HubEmit = (event: 'service-status' | 'service-log' | 'service-log-markers' | 'container-status', payload: object) => void;
 
