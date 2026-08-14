@@ -7,7 +7,7 @@ import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "child_process"
 import log from "spectra-log";
 import { DeployCommand } from "../service/dtos/DeployCommand.dto";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
-import { subprocessEnv } from "./docker-cli";
+import { stripAnsi, subprocessEnv } from "./docker-cli";
 
 export type DockerStatusEvent = {
   status: string;
@@ -56,7 +56,6 @@ export type DockerLogProgress = {
 // 초기 히스토리를 줄 단위 service-log 대신 묶음(service-log-history)으로 전송할 때의 배치 크기.
 const HISTORY_BATCH_SIZE = 2000;
 
-@Global()
 @Injectable()
 export class DockerService implements OnModuleInit {
   private docker: Docker;
@@ -454,7 +453,7 @@ export class DockerService implements OnModuleInit {
 
   private outputLines(chunk: Buffer | string): string[] {
     const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-    return text.split(/\r?\n|\r/).map(line => this.stripAnsi(line).trim()).filter(Boolean);
+    return text.split(/\r?\n|\r/).map(line => stripAnsi(line).trim()).filter(Boolean);
   }
 
   private emitOutputLines(chunk: Buffer | string, sendLog: (line: string) => void, mirrorToAgentLog = false) {
@@ -478,7 +477,7 @@ export class DockerService implements OnModuleInit {
   }
 
   private parseDockerLogLine(line: string, defaultContainerName?: string): DockerLogEntry {
-    const cleanLine = this.stripAnsi(line).trim();
+    const cleanLine = stripAnsi(line).trim();
     const timestampPattern = '(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})';
     const match = cleanLine.match(new RegExp(`^(?:(.*?)\\s+\\|\\s*)?${timestampPattern}(?:\\s+(.*))?$`));
     if (!match) {
@@ -512,9 +511,6 @@ export class DockerService implements OnModuleInit {
     return { line: message, timestamp, containerName, composeService };
   }
 
-  private stripAnsi(value: string): string {
-    return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
-  }
 
   private composeServiceName(containerName: string): string {
     return containerName.replace(/-\d+$/, '');

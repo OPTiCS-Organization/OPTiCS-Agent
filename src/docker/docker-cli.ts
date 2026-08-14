@@ -20,3 +20,7 @@ export function subprocessEnv(): NodeJS.ProcessEnv {
     }
     return cleaned;
 }
+
+export function stripAnsi(value: string): string {
+    return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+}
