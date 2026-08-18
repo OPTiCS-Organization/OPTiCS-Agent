@@ -44,7 +44,7 @@ export class ServiceLifecycleService implements OnModuleInit {
   private containerSnapshots = new Map<number, ContainerSnapshot>();
   private trackedServices = new Map<number, { serviceName: string; deployPreset: DEPLOY_OPTION }>();
 
-  constructor (
+  constructor(
     private readonly dockerService: DockerService,
     private readonly containerLifeCycleService: ContainerLifeCycleService,
     private readonly deployService: DeployService,
@@ -322,7 +322,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     request: DeployCommand,
     emit: HubEmit,
   ) {
-    const success = await this.deployService.deploy(request, emit, true, (services) => {
+    const success = await this.deployService.deploy(request, emit, { redeploy: true }, (services) => {
       this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
     });
     if (success) {
@@ -335,7 +335,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     request: DeployCommand,
     emit: HubEmit,
   ) {
-    const success = await this.deployService.deploy(request, emit, true, (services) => {
+    const success = await this.deployService.deploy(request, emit, { redeploy: false }, (services) => {
       this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
     });
     if (success) {

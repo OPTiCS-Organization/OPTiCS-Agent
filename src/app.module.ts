@@ -26,6 +26,6 @@ import { ContainerLifeCycleService } from './docker/container-lifecycle.service'
     DockerModule,
   ],
   controllers: [AppController],
-  providers: [AppService, DashboardGateway, TunnelService, SshTerminalService, ContainerLifeCycleService],
+  providers: [AppService, DashboardGateway, TunnelService, SshTerminalService],
 })
 export class AppModule {}

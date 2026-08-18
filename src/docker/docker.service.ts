@@ -4,11 +4,11 @@ import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "child_process"
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
 import { DockerLogEntry } from "./types/DockerLogEntry.type";
 import { runtimeLogEntry, sortLogEntries } from "./utility/docker-log.parser";
-import { outputLines } from "./utility/global.util";
 import Docker from "dockerode";
 import path from "path";
 import log from "spectra-log";
 import fs from 'fs';
+import { outputLines } from "./utility/docker-output.util";
 
 export type DockerStatusEvent = {
   status: string;

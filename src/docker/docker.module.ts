@@ -8,6 +8,6 @@ import { ContainerLifeCycleService } from './container-lifecycle.service';
 @Module({
   imports: [ConfigModule],
   providers: [DockerService, DeployService, BuildWorkspaceService, ContainerLifeCycleService],
-  exports: [DockerService, BuildWorkspaceService],
+  exports: [DockerService, DeployService, BuildWorkspaceService, ContainerLifeCycleService],
 })
 export class DockerModule { }

@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { isContainerRuntime } from 'src/docker/utility/global.util';
+import { isContainerRuntime } from 'src/docker/utility/runtime.util';
 
 function databaseUrl() {
   const configured = process.env.DATABASE_URL;

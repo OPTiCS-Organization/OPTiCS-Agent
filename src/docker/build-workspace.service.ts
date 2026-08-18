@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { spawnSync } from "child_process";
-import { isContainerRuntime } from "./utility/global.util";
 import { ConfigService } from "@nestjs/config";
 import path from "path";
 import fs from 'fs';
+import { isContainerRuntime } from "./utility/runtime.util";
 @Injectable()
 export class BuildWorkspaceService {
   private buildRoot: string;

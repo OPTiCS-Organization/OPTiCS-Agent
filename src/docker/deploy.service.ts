@@ -7,13 +7,15 @@ import { spawn, spawnSync } from "child_process";
 import { ConfigService } from "@nestjs/config";
 import { DEPLOY_OPTION } from "src/global/DeployOptionEnum";
 import { normalizeSourceRepositories, primaryRootDirectory, resolvePortMappings } from "./utility/deploy-command.util";
-import { emitOutputLines, isContainerRuntime } from "./utility/global.util";
 import { ServicePortMapping } from "src/global/types/Command.dto";
 import { subprocessEnv } from "./utility/docker-cli";
 import Docker from "dockerode";
 import path from "path";
 import log from "spectra-log";
 import fs from "fs";
+import { emitOutputLines } from "./utility/docker-output.util";
+import { isContainerRuntime } from "./utility/runtime.util";
+import { DeployOptions } from "./types/DeployOptions.type";
 @Injectable()
 export class DeployService {
   private docker: Docker;
@@ -33,7 +35,7 @@ export class DeployService {
     });
   };
 
-  async deploy(data: DeployCommand, emit: HubEmit, redeploy: boolean, onExpectedServices?: ExpectedServicesCallback) {
+  async deploy(data: DeployCommand, emit: HubEmit, deployOptions?: DeployOptions, onExpectedServices?: ExpectedServicesCallback) {
     const serviceIndex = data.serviceIndex;
     const serviceName = data.serviceName.toLowerCase();
     const sendLog = (line: string) => emit('service-log', {
@@ -41,7 +43,7 @@ export class DeployService {
       log: line,
       timestame: new Date().toISOString(),
       source: 'agent',
-      stream: redeploy ? 'redeploy' : 'deploy',
+      stream: deployOptions?.redeploy ? 'redeploy' : 'deploy',
       containerName: serviceName,
     });
     const sendStatus = (status: string) => emit('service-status', { serviceIndex, status });

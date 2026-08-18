@@ -2,12 +2,13 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DEPLOY_OPTION } from "src/global/DeployOptionEnum";
 import { spawn } from "child_process";
-import { emitOutputLines } from "./utility/global.util";
 import { subprocessEnv } from "./utility/docker-cli";
 import { BuildWorkspaceService } from "./build-workspace.service";
 import Docker from 'dockerode';
 import path from "path";
 import log from "spectra-log";
+import { emitOutputLines } from "./utility/docker-output.util";
+import { createServiceLogEmitter } from "./utility/emitters";
 
 @Injectable()
 export class ContainerLifeCycleService {
@@ -23,7 +24,6 @@ export class ContainerLifeCycleService {
       socketPath: '/var/run/docker.sock'
     })
   }
-
 
   async stopService(
     serviceName: string,
