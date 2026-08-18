@@ -1,17 +1,13 @@
 import { Injectable } from "@nestjs/common";
-import { ServicePortMapping } from "src/global/types/Command.dto";
-import { DeployCommand } from "src/service/dtos/DeployCommand.dto";
-import Docker from 'dockerode';
 import { ConfigService } from "@nestjs/config";
-import path from "path";
-import fs from 'fs';
-import { normalizeSourceRepositories } from "./utility/deploy-command.util";
 import { DEPLOY_OPTION } from "src/global/DeployOptionEnum";
-import log from "spectra-log";
 import { spawn } from "child_process";
 import { emitOutputLines } from "./utility/global.util";
 import { subprocessEnv } from "./utility/docker-cli";
 import { BuildWorkspaceService } from "./build-workspace.service";
+import Docker from 'dockerode';
+import path from "path";
+import log from "spectra-log";
 
 @Injectable()
 export class ContainerLifeCycleService {

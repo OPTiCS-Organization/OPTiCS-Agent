@@ -4,17 +4,16 @@ import { HubEmit } from "./types/HubEmit.type";
 import { ExpectedServicesCallback } from "./types/ExpectedServicesCallback";
 import { BuildWorkspaceService } from "./build-workspace.service";
 import { spawn, spawnSync } from "child_process";
-import fs from "fs";
-import path from "path";
-import Docker from "dockerode";
 import { ConfigService } from "@nestjs/config";
 import { DEPLOY_OPTION } from "src/global/DeployOptionEnum";
 import { normalizeSourceRepositories, primaryRootDirectory, resolvePortMappings } from "./utility/deploy-command.util";
 import { emitOutputLines, isContainerRuntime } from "./utility/global.util";
-import log from "spectra-log";
 import { ServicePortMapping } from "src/global/types/Command.dto";
 import { subprocessEnv } from "./utility/docker-cli";
-
+import Docker from "dockerode";
+import path from "path";
+import log from "spectra-log";
+import fs from "fs";
 @Injectable()
 export class DeployService {
   private docker: Docker;

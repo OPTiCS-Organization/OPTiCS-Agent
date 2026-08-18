@@ -1,15 +1,13 @@
-import { Global, Injectable, OnModuleInit } from "@nestjs/common";
+import { Injectable, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import Docker from "dockerode";
-import path from "path";
 import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "child_process";
-import log from "spectra-log";
-import { DeployCommand } from "../service/dtos/DeployCommand.dto";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
-import { stripAnsi, subprocessEnv } from "./utility/docker-cli";
 import { DockerLogEntry } from "./types/DockerLogEntry.type";
 import { runtimeLogEntry, sortLogEntries } from "./utility/docker-log.parser";
-import { emitOutputLines, outputLines } from "./utility/global.util";
+import { outputLines } from "./utility/global.util";
+import Docker from "dockerode";
+import path from "path";
+import log from "spectra-log";
 import fs from 'fs';
 
 export type DockerStatusEvent = {
@@ -28,14 +26,6 @@ type ContainerSnapshot = {
   exitCode?: number | null;
   health?: string | null;
 };
-type ServicePortMapping = {
-  hostPort: number;
-  containerPort: number;
-};
-type SourceRepository = {
-  url: string;
-  rootDirectory?: string | null;
-};
 
 export type DockerLogProgress = {
   loaded: number;
@@ -53,7 +43,6 @@ export class DockerService implements OnModuleInit {
   private statusEmit: StatusEmit | null = null;
 
   private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
-  private readonly preserveFailedDeployArtifacts = true;
 
   constructor(
     private readonly configService: ConfigService,
@@ -189,26 +178,6 @@ export class DockerService implements OnModuleInit {
       ? this.listComposeContainers(serviceName)
       : this.inspectDockerfileContainer(serviceName);
   }
-
-  private async downComposeProject(
-    projectName: string,
-    cwd: string,
-    sendLog: (line: string) => void,
-  ) {
-    if (!fs.existsSync(cwd)) return;
-    sendLog(`[DockerService] Cleaning up failed compose project '${projectName}'...`);
-    await new Promise<void>((resolve) => {
-      const proc = spawn('docker', ['compose', '-p', projectName, 'down', '--remove-orphans'], { cwd, env: subprocessEnv() });
-      proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-      proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-      proc.on('close', () => resolve());
-      proc.on('error', (error) => {
-        sendLog(`[DockerService] Failed to clean up compose project '${projectName}': ${String(error)}`);
-        resolve();
-      });
-    });
-  }
-
 
   async streamContainerLog(
     containerName: string,
@@ -436,15 +405,4 @@ export class DockerService implements OnModuleInit {
   private isContainerRuntime() {
     return process.env.OPTICS_AGENT_RUNTIME === 'container' || fs.existsSync('/.dockerenv');
   }
-
-
-  private dockerRunUserArgs(): string[] {
-    if (this.isContainerRuntime()) return [];
-    if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function') return [];
-
-    return ['-u', `${process.getuid()}:${process.getgid()}`];
-  }
-
-
-
 }
