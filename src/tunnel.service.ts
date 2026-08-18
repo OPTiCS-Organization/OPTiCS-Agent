@@ -12,7 +12,6 @@ import { PrismaService } from './share/prisma.service';
 import { NotifyService } from './notify/notify.service';
 import type { ConnectRequestPayload } from './notify/notify.service';
 import { NotifyGateway } from './notify/notify.gateway';
-import { DockerService } from './docker/docker.service';
 import { ConfigService } from '@nestjs/config';
 import { ReverseTunnelService } from './tunnel/reverse-tunnel.service';
 import { SystemMetricsUtility } from './utility/systemMetric.util';
@@ -55,7 +54,6 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly prismaService: PrismaService,
     private readonly notifyService: NotifyService,
     private readonly notifyGateway: NotifyGateway,
-    private readonly dockerService: DockerService,
     private readonly reverseTunnelService: ReverseTunnelService,
     private readonly systemMetricsUtility: SystemMetricsUtility,
     private readonly sshTerminalService: SshTerminalService,

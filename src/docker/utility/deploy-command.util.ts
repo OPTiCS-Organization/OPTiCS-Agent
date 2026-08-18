@@ -1,3 +1,4 @@
+import { DEPLOY_OPTION } from "src/global/DeployOptionEnum";
 import { ServicePortMapping, SourceRepository } from "src/global/types/Command.dto";
 import { DeployCommand } from "src/service/dtos/DeployCommand.dto";
 
@@ -46,3 +47,9 @@ export function normalizeRootDirectory(rootDirectory: string | null | undefined)
 export function primaryRootDirectory(data: DeployCommand): string | null {
     return normalizeSourceRepositories(data.sourceUrl)[0]?.rootDirectory ?? normalizeRootDirectory(data.rootDirectory);
   }
+
+// DOCKERFILE 프리셋만 단일 컨테이너로 다루고 나머지는 전부 compose로 처리한다.
+// 같은 판정이 여러 서비스에 흩어져 있어 한 곳으로 모았다.
+export function isComposePreset(deployPreset: DEPLOY_OPTION): boolean {
+  return (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
+}
