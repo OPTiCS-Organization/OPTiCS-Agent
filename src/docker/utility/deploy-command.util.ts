@@ -53,3 +53,9 @@ export function primaryRootDirectory(data: DeployCommand): string | null {
 export function isComposePreset(deployPreset: DEPLOY_OPTION): boolean {
   return (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 }
+
+// git URL 끝의 저장소 이름만 뽑는다. (.../testproject.git -> testproject)
+// 복수 저장소를 클론할 때 하위 디렉토리 이름으로 쓴다.
+export function repoName(url: string): string {
+  return url.split('/').pop()?.replace(/\.git$/, '') ?? 'repo';
+}

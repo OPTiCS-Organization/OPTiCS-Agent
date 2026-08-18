@@ -6,6 +6,8 @@ import { ContainerLifeCycleService } from './container-lifecycle.service';
 import { ContainerInspectService } from './container-inspect.service';
 import { DockerLogService } from './docker-log.service';
 import { DockerEventService } from './docker-event.service';
+import { ComposeProjectService } from './compose-project.service';
+import { ImageBuildService } from './image-build.service';
 
 @Module({
   imports: [ConfigModule],
@@ -16,6 +18,8 @@ import { DockerEventService } from './docker-event.service';
     ContainerInspectService,
     DockerLogService,
     DockerEventService,
+    ComposeProjectService,
+    ImageBuildService,
   ],
   exports: [
     DeployService,
@@ -24,6 +28,8 @@ import { DockerEventService } from './docker-event.service';
     ContainerInspectService,
     DockerLogService,
     DockerEventService,
+    ComposeProjectService,
+    ImageBuildService,
   ],
 })
 export class DockerModule { }
