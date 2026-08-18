@@ -1,4 +1,4 @@
-type LogStream = 'deploy' | 'lifecycle' | 'runtime';
+export type LogStream = 'deploy' | 'lifecycle' | 'runtime';
 
 export type DockerLogEntry = {
   line: string;

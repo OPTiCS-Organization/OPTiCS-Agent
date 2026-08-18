@@ -39,10 +39,13 @@ export class DeployService {
 
   async deploy(data: DeployCommand, emit: HubEmit, deployOptions?: DeployOptions, onExpectedServices?: ExpectedServicesCallback) {
     const serviceName = data.serviceName.toLowerCase();
-    const { sendLog } = createServiceLogEmitter(emit, { serviceName });
-    const { sendStatus } = createServiceStatusEmitter(emit, { serviceName });
+    const { sendLog } = createServiceLogEmitter(emit, {
+      serviceIndex: data.serviceIndex,
+      containerName: serviceName,
+      stream: 'deploy',
+    });
+    const { sendStatus } = createServiceStatusEmitter(emit, { serviceIndex: data.serviceIndex });
     let composeBuildDir: string | null = null;
-    const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, serviceName), sendLog);
     try {
       sendStatus(ServiceStatus.BUILDING);
       sendLog(`Redeploying service ${serviceName}@${data.serviceVersion}`);
@@ -61,7 +64,11 @@ export class DeployService {
         sendLog(`No running container found. Proceeding deploy.`);
       }
 
+      // 클론보다 반드시 먼저 지워야 한다. 순서가 바뀌면 방금 클론한 소스를 삭제한다.
       this.buildWorkspaceService.removeBuildDir(path.join(this.buildRoot, serviceName), sendLog);
+
+      const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, serviceName), sendLog);
+
       const rootDirectory = primaryRootDirectory(data);
       const buildDir = this.resolveBuildContext(clonedDir, rootDirectory);
       if (buildDir !== clonedDir) {
@@ -90,7 +97,7 @@ export class DeployService {
         const services = this.writeNoRestartOverride(buildDir, sendLog);
         onExpectedServices?.(services);
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', name ?? data.serviceName.toLowerCase(), 'up', '-d', '--build'], { cwd: buildDir, env: subprocessEnv() });
+          const proc = spawn('docker', ['compose', '-p', serviceName, 'up', '-d', '--build'], { cwd: buildDir, env: subprocessEnv() });
           proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
           proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
@@ -338,101 +345,4 @@ export class DeployService {
     return ['-u', `${process.getuid()}:${process.getgid()}`];
   }
 
-  // // 이미지로 빌드하는 함수
-  // async deployNewService(
-  //   data: DeployCommand,
-  //   emit: HubEmit,
-  //   onExpectedServices?: ExpectedServicesCallback,
-  // ) {
-  //   const si: number = Number(data.serviceIndex);
-  //   const sendLog = (line: string) => emit('service-log', {
-  //     serviceIndex: si,
-  //     log: line,
-  //     timestamp: new Date().toISOString(),
-  //     source: 'agent',
-  //     stream: 'deploy',
-  //     containerName: data.serviceName.toLowerCase(),
-  //   });
-  //   const sendStatus = (status: string) => emit('service-status', { serviceIndex: si, status });
-  //   const name = data.serviceName.toLowerCase();
-  //   let composeBuildDir: string | null = null;
-
-  //   try {
-  //     sendStatus('building');
-  //     sendLog(`Creating new Service '${name}@${data.serviceVersion}' | preset: ${data.deployPreset}`);
-  //     removeBuildDir(path.join(this.buildRoot, name), sendLog);
-  //     const clonedDir = await cloneAll(data.sourceUrl, path.join(this.buildRoot, name), sendLog);
-  //     const rootDirectory = primaryRootDirectory(data);
-  //     const buildDir = this.resolveBuildContext(clonedDir, rootDirectory);
-  //     if (buildDir !== clonedDir) {
-  //       sendLog(`[DockerService] Using root directory: ${rootDirectory}`);
-  //     }
-  //     fs.chmodSync(buildDir, 0o755);
-  //     fs.readdirSync(buildDir).forEach(file => {
-  //       try { fs.chmodSync(path.join(buildDir, file), 0o755); } catch { /* skip non-chmodable */ }
-  //     });
-
-  //     const preset = data.deployPreset.toUpperCase() as DEPLOY_OPTION;
-  //     const composeFileExists = fs.existsSync(path.join(buildDir, 'docker-compose.yml'))
-  //       || fs.existsSync(path.join(buildDir, 'docker-compose.yaml'));
-
-  //     if (preset === DEPLOY_OPTION.COMPOSE && !composeFileExists) {
-  //       throw new Error('docker-compose.yml not found. Change deploy option to DOCKERFILE or add docker-compose.yml to the repository.');
-  //     }
-
-  //     const hasCompose = preset === DEPLOY_OPTION.COMPOSE
-  //       || (preset !== DEPLOY_OPTION.DOCKERFILE && composeFileExists);
-
-  //     if (hasCompose) {
-  //       sendLog('Detected docker-compose, starting build...');
-  //       composeBuildDir = buildDir;
-  //       this.writeComposeEnvFile(buildDir, data);
-  //       const services = writeNoRestartOverride(buildDir, sendLog);
-  //       onExpectedServices?.(services);
-  //       await new Promise<void>((resolve, reject) => {
-  //         const proc = spawn('docker', ['compose', '-p', name, 'up', '-d', '--build'], { cwd: buildDir, env: subprocessEnv() });
-  //         proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-  //         proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-  //         proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
-  //       });
-  //     } else {
-  //       sendLog('Detected Dockerfile, starting build...');
-  //       const stream = await this.docker.buildImage({
-  //         context: buildDir,
-  //         src: fs.readdirSync(buildDir)
-  //       }, { t: `${data.serviceName.toLowerCase()}:${data.serviceVersion}` });
-
-  //       await new Promise((resolve, reject) => {
-  //         type BuildEvent = { stream?: string; error?: string };
-  //         this.docker.modem.followProgress(stream, (err: Error | null, res: BuildEvent[]) => {
-  //           if (err) return reject(err);
-  //           const failed = res.find(r => r.error);
-  //           if (failed) return reject(new Error(failed.error ?? 'Build failed'));
-  //           resolve(res);
-  //         }, (event: BuildEvent) => {
-  //           if (event.stream) { const line = event.stream.trim(); log(line); sendLog(line); }
-  //           if (event.error) { log(`BUILD ERROR: ${event.error}`); sendLog(`BUILD ERROR: ${event.error}`); }
-  //         });
-  //       });
-  //       sendLog('Build done. Starting container...');
-  //       await runService(
-  //         data.serviceName,
-  //         data.serviceVersion,
-  //         resolvePortMappings(data),
-  //         data.env,
-  //       );
-  //     }
-
-  //     sendStatus('running');
-  //     sendLog('Service started successfully.');
-  //     log('Success.');
-  //     return true;
-  //   } catch (error) {
-  //     await this.cleanupFailedDeployment(name, composeBuildDir, sendLog);
-  //     sendStatus('failed');
-  //     sendLog(`ERROR: ${String(error)}`);
-  //     log(error);
-  //     return false;
-  //   }
-  // }
 }

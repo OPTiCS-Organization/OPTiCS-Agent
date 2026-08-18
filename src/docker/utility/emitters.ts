@@ -6,20 +6,22 @@ import { ServiceStatus } from "../types/ServiceStatus.type";
 // sendLog 클로저 생성 팩토리 함수
 export function createServiceLogEmitter(emit: HubEmit, context: LogEmitContext) {
   return {
-    sendLog: (line: string) => emit('service-log', { serviceName: context.serviceName, log: line, })
+    sendLog: (line: string) => emit('service-log', {
+      serviceIndex: context.serviceIndex,
+      log: line,
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      stream: context.stream,
+      containerName: context.containerName,
+    }),
   }
-  // const sendLog = (line: string) => emit('service-log', {
-  //   serviceIndex: si,
-  //   log: line,
-  //   timestamp: new Date().toISOString(),
-  //   source: 'agent',
-  //   stream: 'deploy',
-  //   containerName: data.serviceName.toLowerCase(),
-  // });
 }
 
 export function createServiceStatusEmitter(emit: HubEmit, context: StatusEmitContext) {
   return {
-    sendStatus: (status: ServiceStatus) => emit('service-status', {serviceName: context.serviceName, status})
+    sendStatus: (status: ServiceStatus) => emit('service-status', {
+      serviceIndex: context.serviceIndex,
+      status,
+    })
   }
 }

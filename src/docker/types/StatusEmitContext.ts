@@ -1,3 +1,3 @@
 export type StatusEmitContext = {
-  serviceName: string;
+  serviceIndex: number;
 }

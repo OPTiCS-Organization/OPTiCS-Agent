@@ -8,8 +8,7 @@ import log from 'spectra-log';
 import { DockerLogEntry } from 'src/docker/types/DockerLogEntry.type';
 import { ContainerLifeCycleService } from 'src/docker/container-lifecycle.service';
 import { DeployService } from 'src/docker/deploy.service';
-
-type HubEmit = (event: 'service-status' | 'service-log' | 'service-log-markers' | 'container-status', payload: object) => void;
+import { HubEmit } from 'src/docker/types/HubEmit.type';
 
 export interface ContainerState {
   name: string;
@@ -302,9 +301,9 @@ export class ServiceLifecycleService implements OnModuleInit {
     serviceIndex: number,
     deployPreset: DEPLOY_OPTION,
     deleteScope: 'containers' | 'service',
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.containerLifeCycleService.deleteService(serviceName, deployPreset, deleteScope, emit);
+    await this.containerLifeCycleService.deleteService(serviceIndex, serviceName, deployPreset, deleteScope, emit);
     await this.prismaService.serviceLogSessionMarker.deleteMany({ where: { serviceIndex } });
 
     if (deleteScope === 'service') {
@@ -345,18 +344,20 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   async v1StartService(
+    serviceIndex: number,
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.containerLifeCycleService.restartService(serviceName, deployPreset, emit);
+    await this.containerLifeCycleService.restartService(serviceIndex, serviceName, deployPreset, emit);
   }
 
   async v1StopService(
+    serviceIndex: number,
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.containerLifeCycleService.stopService(serviceName, deployPreset, emit);
+    await this.containerLifeCycleService.stopService(serviceIndex, serviceName, deployPreset, emit);
   }
 }

@@ -268,6 +268,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           await this.serviceLifecycleService.createServiceSessionMarker(startIdx, serviceName, 'service-start');
           await this.serviceLifecycleService.syncContainerStatus(startIdx, serviceName, deployPreset);
           await this.serviceLifecycleService.v1StartService(
+            startIdx,
             serviceName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
@@ -291,6 +292,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           const { serviceIndex: stopIdx, serviceName, deployPreset } = commandPayload;
           await this.serviceLifecycleService.syncContainerStatus(stopIdx, serviceName, deployPreset);
           await this.serviceLifecycleService.v1StopService(
+            stopIdx,
             serviceName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
@@ -311,76 +313,79 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
         case COMMAND.CONTAINER_START: {
           const commandPayload = this.getServiceCommandPayload(payload);
           if (!commandPayload) break;
-          const { serviceIndex: svcIdx, serviceName, deployPreset } = commandPayload;
+          const { serviceIndex: serviceIdx, serviceName, deployPreset } = commandPayload;
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(serviceIdx, serviceName, deployPreset);
           await this.containerLifeCycleService.startContainer(
+            serviceIdx,
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
-                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
-                this.serviceGateway.pushStatus(svcIdx, p.status);
-                void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
+                this.socket.emit(event, { serviceIndex: serviceIdx, status: p.status });
+                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${serviceIdx}\n  Status        : ${p.status}`);
+                this.serviceGateway.pushStatus(serviceIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(serviceIdx, p.status);
               } else if (event === 'service-log') {
-                this.emitServiceLog(svcIdx, p);
+                this.emitServiceLog(serviceIdx, p);
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset, 'starting');
+          await this.serviceLifecycleService.syncContainerStatus(serviceIdx, serviceName, deployPreset, 'starting');
           break;
         }
         case COMMAND.CONTAINER_STOP: {
           const commandPayload = this.getServiceCommandPayload(payload);
           if (!commandPayload) break;
-          const { serviceIndex: svcIdx, serviceName, deployPreset } = commandPayload;
+          const { serviceIndex: serviceIdx, serviceName, deployPreset } = commandPayload;
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(serviceIdx, serviceName, deployPreset);
           await this.containerLifeCycleService.stopContainer(
+            serviceIdx,
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
-                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
-                this.serviceGateway.pushStatus(svcIdx, p.status);
-                void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
+                this.socket.emit(event, { serviceIndex: serviceIdx, status: p.status });
+                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${serviceIdx}\n  Status        : ${p.status}`);
+                this.serviceGateway.pushStatus(serviceIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(serviceIdx, p.status);
               } else if (event === 'service-log') {
-                this.emitServiceLog(svcIdx, p);
+                this.emitServiceLog(serviceIdx, p);
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(serviceIdx, serviceName, deployPreset);
           break;
         }
         case COMMAND.CONTAINER_RESTART: {
           const commandPayload = this.getServiceCommandPayload(payload);
           if (!commandPayload) break;
-          const { serviceIndex: svcIdx, serviceName, deployPreset } = commandPayload;
+          const { serviceIndex: serviceIdx, serviceName, deployPreset } = commandPayload;
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
+          await this.serviceLifecycleService.syncContainerStatus(serviceIdx, serviceName, deployPreset);
           await this.containerLifeCycleService.restartContainer(
+            serviceIdx,
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: svcIdx, status: p.status });
-                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${svcIdx}\n  Status        : ${p.status}`);
-                this.serviceGateway.pushStatus(svcIdx, p.status);
-                void this.serviceLifecycleService.updateServiceStatus(svcIdx, p.status);
+                this.socket.emit(event, { serviceIndex: serviceIdx, status: p.status });
+                log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${serviceIdx}\n  Status        : ${p.status}`);
+                this.serviceGateway.pushStatus(serviceIdx, p.status);
+                void this.serviceLifecycleService.updateServiceStatus(serviceIdx, p.status);
               } else if (event === 'service-log') {
-                this.emitServiceLog(svcIdx, p);
+                this.emitServiceLog(serviceIdx, p);
               }
             },
           );
-          await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset, 'starting');
+          await this.serviceLifecycleService.syncContainerStatus(serviceIdx, serviceName, deployPreset, 'starting');
           break;
         }
         case COMMAND.ABORT:
