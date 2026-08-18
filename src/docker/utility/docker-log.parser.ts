@@ -1,5 +1,5 @@
 import { stripAnsi } from "./docker-cli";
-import { DockerLogEntry } from "./types/DockerLogEntry.type";
+import { DockerLogEntry } from "../types/DockerLogEntry.type";
 
 function composeServiceName(containerName: string): string {
   return containerName.replace(/-\d+$/, '');
@@ -51,4 +51,14 @@ export function parseDockerLogLine(line: string, defaultContainerName?: string):
   const composeService = containerName ? composeServiceName(containerName) : undefined;
 
   return { line: message, timestamp, containerName, composeService };
+}
+
+export function sortLogEntries(entries: DockerLogEntry[]): DockerLogEntry[] {
+  return [...entries].sort((a, b) => logEntryTime(a) - logEntryTime(b));
+}
+
+export function logEntryTime(entry: DockerLogEntry): number {
+  if (!entry.timestamp) return Number.MAX_SAFE_INTEGER;
+  const time = new Date(entry.timestamp).getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
 }

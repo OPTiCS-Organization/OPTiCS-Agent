@@ -6,9 +6,11 @@ import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "child_process"
 import log from "spectra-log";
 import { DeployCommand } from "../service/dtos/DeployCommand.dto";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
-import { stripAnsi, subprocessEnv } from "./docker-cli";
+import { stripAnsi, subprocessEnv } from "./utility/docker-cli";
 import { DockerLogEntry } from "./types/DockerLogEntry.type";
-import { runtimeLogEntry } from "./docker-log.parser";
+import { runtimeLogEntry, sortLogEntries } from "./utility/docker-log.parser";
+import { emitOutputLines, outputLines } from "./utility/global.util";
+import fs from 'fs';
 
 export type DockerStatusEvent = {
   status: string;
@@ -52,29 +54,6 @@ export class DockerService implements OnModuleInit {
 
   private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
   private readonly preserveFailedDeployArtifacts = true;
-
-
-  private normalizeSourceRepositories(sourceUrl: DeployCommand['sourceUrl']): SourceRepository[] {
-    const rawEntries = Array.isArray(sourceUrl) ? sourceUrl : [sourceUrl];
-    return rawEntries.map((entry) => {
-      if (typeof entry === 'string') {
-        return { url: entry, rootDirectory: null };
-      }
-      return {
-        url: String(entry.url ?? ''),
-        rootDirectory: this.normalizeRootDirectory(entry.rootDirectory),
-      };
-    }).filter(entry => entry.url);
-  }
-
-  private normalizeRootDirectory(rootDirectory: string | null | undefined): string | null {
-    const value = rootDirectory?.trim().replace(/^\/+/, '') ?? '';
-    return value || null;
-  }
-
-  private primaryRootDirectory(data: DeployCommand): string | null {
-    return this.normalizeSourceRepositories(data.sourceUrl)[0]?.rootDirectory ?? this.normalizeRootDirectory(data.rootDirectory);
-  }
 
   constructor(
     private readonly configService: ConfigService,
@@ -220,8 +199,8 @@ export class DockerService implements OnModuleInit {
     sendLog(`[DockerService] Cleaning up failed compose project '${projectName}'...`);
     await new Promise<void>((resolve) => {
       const proc = spawn('docker', ['compose', '-p', projectName, 'down', '--remove-orphans'], { cwd, env: subprocessEnv() });
-      proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
-      proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog, true));
+      proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
+      proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
       proc.on('close', () => resolve());
       proc.on('error', (error) => {
         sendLog(`[DockerService] Failed to clean up compose project '${projectName}': ${String(error)}`);
@@ -230,21 +209,6 @@ export class DockerService implements OnModuleInit {
     });
   }
 
-  private async cleanupFailedDeployment(
-    projectName: string,
-    composeBuildDir: string | null,
-    sendLog: (line: string) => void,
-  ) {
-    if (this.preserveFailedDeployArtifacts) {
-      sendLog('[DockerService] Failed deploy cleanup is temporarily disabled; leaving containers and build directory in place.');
-      return;
-    }
-
-    if (composeBuildDir) {
-      await this.downComposeProject(projectName, composeBuildDir, sendLog);
-    }
-    this.removeBuildDir(path.join(this.buildRoot, projectName), sendLog);
-  }
 
   async streamContainerLog(
     containerName: string,
@@ -285,13 +249,13 @@ export class DockerService implements OnModuleInit {
       const proc = spawn('docker', ['compose', '-p', containerName, 'logs', '--follow', '--tail', '0', '--timestamps'], {});
       this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
-        this.outputLines(chunk).forEach(line => {
+        outputLines(chunk).forEach(line => {
           const entry = runtimeLogEntry(line, containerName);
           if (entry) onLog(entry);
         });
       });
       proc.stderr.on('data', (chunk: Buffer) => {
-        this.outputLines(chunk).forEach(line => {
+        outputLines(chunk).forEach(line => {
           const entry = runtimeLogEntry(line, containerName, true);
           if (entry) onLog(entry);
         });
@@ -307,13 +271,13 @@ export class DockerService implements OnModuleInit {
       const proc = spawn('docker', ['logs', '--follow', '--tail', '0', '--timestamps', containerName], {});
       this.logStreams.set(containerName, proc);
       proc.stdout.on('data', (chunk: Buffer) => {
-        this.outputLines(chunk).forEach(line => {
+        outputLines(chunk).forEach(line => {
           const entry = runtimeLogEntry(line, containerName);
           if (entry) onLog(entry);
         });
       });
       proc.stderr.on('data', (chunk: Buffer) => {
-        this.outputLines(chunk).forEach(line => {
+        outputLines(chunk).forEach(line => {
           const entry = runtimeLogEntry(line, containerName, true);
           if (entry) onLog(entry);
         });
@@ -353,7 +317,7 @@ export class DockerService implements OnModuleInit {
       return [{ line: `ERROR: docker logs exited with code ${result.status ?? 'unknown'}` }];
     }
 
-    return this.sortLogEntries([...stdout, ...stderr]);
+    return sortLogEntries([...stdout, ...stderr]);
   }
 
   loadOlderContainerLogs(
@@ -389,31 +353,8 @@ export class DockerService implements OnModuleInit {
       return [{ line: `ERROR: docker logs exited with code ${result.status ?? 'unknown'}` }];
     }
 
-    return this.sortLogEntries([...stdout, ...stderr]);
+    return sortLogEntries([...stdout, ...stderr]);
   }
-
-  private sortLogEntries(entries: DockerLogEntry[]): DockerLogEntry[] {
-    return [...entries].sort((a, b) => this.logEntryTime(a) - this.logEntryTime(b));
-  }
-
-  private logEntryTime(entry: DockerLogEntry): number {
-    if (!entry.timestamp) return Number.MAX_SAFE_INTEGER;
-    const time = new Date(entry.timestamp).getTime();
-    return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
-  }
-
-  private outputLines(chunk: Buffer | string): string[] {
-    const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk;
-    return text.split(/\r?\n|\r/).map(line => stripAnsi(line).trim()).filter(Boolean);
-  }
-
-  private emitOutputLines(chunk: Buffer | string, sendLog: (line: string) => void, mirrorToAgentLog = false) {
-    this.outputLines(chunk).forEach((line) => {
-      if (mirrorToAgentLog) log(line);
-      sendLog(line);
-    });
-  }
-
 
   stopContainerLog(containerName: string): void {
     const stream = this.logStreams.get(containerName);
@@ -491,22 +432,11 @@ export class DockerService implements OnModuleInit {
 
   // IN: https://www.github.com/acorn497/testproject.git
   // RETURN: https://www.github.com/acotn497/testproject
-  private repoName(url: string): string {
-    return url.split('/').pop()?.replace(/\.git$/, '') ?? 'repo';
-  }
 
   private isContainerRuntime() {
     return process.env.OPTICS_AGENT_RUNTIME === 'container' || fs.existsSync('/.dockerenv');
   }
 
-  private cloneWorkspaceMount() {
-    if (this.isContainerRuntime()) {
-      return process.env.OPTICS_BUILD_VOLUME ?? 'optics-build';
-    }
-
-    fs.mkdirSync(this.buildRoot, { recursive: true });
-    return this.buildRoot;
-  }
 
   private dockerRunUserArgs(): string[] {
     if (this.isContainerRuntime()) return [];
@@ -516,350 +446,5 @@ export class DockerService implements OnModuleInit {
   }
 
 
-  private async cloneInGitContainer(repoUrl: string, targetDir: string, sendLog: (line: string) => void): Promise<void> {
-    const relativeTarget = path.relative(this.buildRoot, targetDir);
-    if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
-      throw new Error('Clone target must stay inside the build workspace.');
-    }
-    fs.mkdirSync(path.dirname(targetDir), { recursive: true });
 
-    const containerTarget = `/workspace/${relativeTarget.split(path.sep).join('/')}`;
-    const mount = `${this.cloneWorkspaceMount()}:/workspace`;
-    sendLog(`[DockerService] Cloning source in git container...\nFrom: ${repoUrl}\nInto: ${containerTarget}`);
-
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('docker', ['run', '--rm', ...this.dockerRunUserArgs(), '-v', mount, 'alpine/git', 'clone', repoUrl, containerTarget]);
-      proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
-      proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
-      proc.on('error', reject);
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`git clone container exited with code ${code}`)));
-    });
-  }
-
-  private async cloneAll(
-    sourceUrl: DeployCommand['sourceUrl'],
-    baseDir: string,
-    sendLog: (line: string) => void,
-  ): Promise<string> {
-    const sources = this.normalizeSourceRepositories(sourceUrl);
-    const urls = sources.map(source => source.url);
-
-    if (urls.length === 1) {
-      // 단일 URL: baseDir에 바로 클론
-      await this.cloneInGitContainer(urls[0], baseDir, sendLog);
-      sendLog('[DockerService] Clone done.');
-      return baseDir;
-    }
-
-    // 복수 URL: baseDir/{repoName}/ 에 각각 클론, 첫 번째가 메인
-    fs.mkdirSync(baseDir, { recursive: true });
-    for (const url of urls) {
-      const repoDir = path.join(baseDir, this.repoName(url));
-      await this.cloneInGitContainer(url, repoDir, sendLog);
-    }
-    sendLog('[DockerService] All Repository Successfully Cloned.');
-    return path.join(baseDir, this.repoName(urls[0]));
-  }
-
-  private resolveBuildContext(baseDir: string, rootDirectory: string | null | undefined): string {
-    const cleanRoot = rootDirectory?.trim();
-    if (!cleanRoot || cleanRoot === '.') return baseDir;
-
-    const resolved = path.resolve(baseDir, cleanRoot);
-    const relative = path.relative(baseDir, resolved);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      throw new Error('Root directory must stay inside the cloned repository.');
-    }
-    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-      throw new Error(`Root directory not found: ${cleanRoot}`);
-    }
-    return resolved;
-  }
-
-  // 컨테이너 이름을 받아 시작 하는 함수
-  async runService(
-    serviceName: string,
-    serviceVersion: string,
-    portMappings: ServicePortMapping[],
-    env?: Record<string, string>,
-  ) {
-    const portBindings: Record<string, { HostPort: string }[]> = {};
-    const exposedPorts: Record<string, object> = {};
-    for (const mapping of portMappings) {
-      const key = `${mapping.containerPort}/tcp`;
-      portBindings[key] = [{ HostPort: String(mapping.hostPort) }];
-      exposedPorts[key] = {};
-    }
-
-    const container = await this.docker.createContainer({
-      Image: `${serviceName.toLowerCase()}:${serviceVersion}`,
-      name: serviceName.toLowerCase(),
-      Env: env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : undefined,
-      ExposedPorts: exposedPorts,
-      HostConfig: {
-        PortBindings: portBindings,
-        RestartPolicy: { Name: 'no' },
-        ExtraHosts: ['host.docker.internal:host-gateway'],
-      },
-    });
-
-    await container.start();
-    log('Started Service');
-  }
-
-  async stopService(
-    serviceName: string,
-    deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
-  ) {
-    const si = serviceName.toLowerCase();
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName: si,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
-    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
-
-    try {
-      sendLog(`Stopping service '${si}'...`);
-      if (isCompose) {
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', si, 'stop']);
-          proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose stop exited with code ${code}`)));
-        });
-      } else {
-        await this.docker.getContainer(si).stop();
-      }
-      sendStatus('stopped');
-      sendLog(`Service '${si}' stopped successfully.`);
-      log(`[DockerService] stopService success | name=${si}`);
-    } catch (e) {
-      sendStatus('failed');
-      sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] stopService failed | name=${si} | ${String(e)}`);
-    }
-  }
-
-  async startContainer(
-    containerName: string,
-    _deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
-  ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName: containerName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName,
-    });
-
-    try {
-      sendLog(`Starting container '${containerName}'...`);
-      await this.docker.getContainer(containerName).start();
-      sendLog(`Container '${containerName}' started successfully.`);
-      log(`[DockerService] startContainer success | name=${containerName}`);
-    } catch (e) {
-      sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] startContainer failed | name=${containerName} | ${String(e)}`);
-    }
-  }
-
-  async stopContainer(
-    containerName: string,
-    _deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
-  ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName: containerName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName,
-    });
-
-    try {
-      sendLog(`Stopping container '${containerName}'...`);
-      await this.docker.getContainer(containerName).stop();
-      sendLog(`Container '${containerName}' stopped successfully.`);
-      log(`[DockerService] stopContainer success | name=${containerName}`);
-    } catch (e) {
-      sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] stopContainer failed | name=${containerName} | ${String(e)}`);
-    }
-  }
-
-  async restartService(
-    serviceName: string,
-    deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
-  ) {
-    const si = serviceName.toLowerCase();
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName: si,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
-    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
-
-    try {
-      sendStatus('restarting');
-      sendLog(`Restarting service '${si}'...`);
-      if (isCompose) {
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', si, 'restart']);
-          proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose restart exited with code ${code}`)));
-        });
-      } else {
-        await this.docker.getContainer(si).restart();
-      }
-      sendStatus('running');
-      sendLog(`Service '${si}' restarted successfully.`);
-      log(`[DockerService] restartService success | name=${si}`);
-    } catch (e) {
-      sendStatus('failed');
-      sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] restartService failed | name=${si} | ${String(e)}`);
-    }
-  }
-
-  async restartContainer(
-    containerName: string,
-    _deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
-  ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName: containerName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName,
-    });
-
-    try {
-      sendLog(`Restarting container '${containerName}'...`);
-      await this.docker.getContainer(containerName).restart();
-      sendLog(`Container '${containerName}' restarted successfully.`);
-      log(`[DockerService] restartContainer success | name=${containerName}`);
-    } catch (e) {
-      sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] restartContainer failed | name=${containerName} | ${String(e)}`);
-    }
-  }
-
-  async deleteService(
-    serviceName: string,
-    deployPreset: DEPLOY_OPTION,
-    deleteScope: 'containers' | 'service',
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
-  ) {
-    const si = serviceName.toLowerCase();
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName: si,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
-    const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
-
-    try {
-      sendLog(`Deleting service '${si}'...`);
-      if (isCompose) {
-        await new Promise<void>((resolve, reject) => {
-          const args = deleteScope === 'service'
-            ? ['compose', '-p', si, 'down', '--rmi', 'all', '--volumes']
-            : ['compose', '-p', si, 'down'];
-          const proc = spawn('docker', args, { env: subprocessEnv() });
-          proc.stdout.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
-          proc.stderr.on('data', (chunk: Buffer) => this.emitOutputLines(chunk, sendLog));
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose down exited with code ${code}`)));
-        });
-      } else {
-        const container = this.docker.getContainer(si);
-        const info = await container.inspect() as { State: { Running: boolean } };
-        if (info.State.Running) {
-          sendLog(`Stopping container '${si}'...`);
-          await container.stop();
-        }
-        await container.remove();
-        sendLog(`Container '${si}' removed.`);
-        if (deleteScope === 'service') {
-          try {
-            await this.docker.getImage(si).remove();
-            sendLog(`Image '${si}' removed.`);
-          } catch {
-            sendLog(`No image found for '${si}', skipping.`);
-          }
-        }
-      }
-      if (deleteScope === 'service') {
-        this.removeBuildDir(path.join(this.buildRoot, si), sendLog);
-      }
-      sendStatus('removed');
-      sendLog(`Service '${si}' deleted successfully.`);
-      log(`[DockerService] deleteService success | name=${si}`);
-    } catch (e) {
-      sendStatus('failed');
-      sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] deleteService failed | name=${si} | ${String(e)}`);
-    }
-  }
-
-  private writeNoRestartOverride(buildDir: string, sendLog: (line: string) => void): string[] {
-    let services: string[] = [];
-    try {
-      const result = spawnSync(
-        'docker', ['compose', 'config', '--services'],
-        { cwd: buildDir, encoding: 'utf8', env: subprocessEnv() },
-      );
-
-      if (result.status !== 0) {
-        const errorMessage = result.stderr?.trim() || 'docker compose config --services failed.';
-        sendLog(`[DockerService] Could not resolve compose service list for restart override.\n  ${errorMessage}`);
-        throw new Error('Failed to generate compose restart override.');
-      }
-      services = result.stdout.split('\n').map(s => s.trim()).filter(Boolean);
-    } catch (error) {
-      if (error instanceof Error && error.message === 'Failed to generate compose restart override.') {
-        throw error;
-      }
-      sendLog(`[DockerService] Could not resolve compose service list for restart override.\n  ${String(error)}`);
-      throw new Error('Failed to generate compose restart override.');
-    }
-
-    if (services.length === 0) {
-      sendLog('[DockerService] Compose service list is empty; restart override cannot be generated.');
-      throw new Error('Failed to generate compose restart override.');
-    }
-
-    const overrideContent = [
-      'services:',
-      ...services.map(s => `  ${s}:\n    restart: "no"`),
-    ].join('\n') + '\n';
-
-    try {
-      fs.writeFileSync(path.join(buildDir, 'docker-compose.override.yml'), overrideContent);
-    } catch (error) {
-      sendLog(`[DockerService] Could not write compose restart override.\n  ${String(error)}`);
-      throw new Error('Failed to generate compose restart override.');
-    }
-
-    sendLog(`[DockerService] Injected restart: "no" override for services: ${services.join(', ')}`);
-    return services;
-  }
 }

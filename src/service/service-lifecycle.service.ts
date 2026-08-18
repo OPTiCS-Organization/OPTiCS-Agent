@@ -6,6 +6,8 @@ import { PrismaService } from 'src/share/prisma.service';
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 import log from 'spectra-log';
 import { DockerLogEntry } from 'src/docker/types/DockerLogEntry.type';
+import { ContainerLifeCycleService } from 'src/docker/container-lifecycle.service';
+import { DeployService } from 'src/docker/deploy.service';
 
 type HubEmit = (event: 'service-status' | 'service-log' | 'service-log-markers' | 'container-status', payload: object) => void;
 
@@ -44,6 +46,8 @@ export class ServiceLifecycleService implements OnModuleInit {
 
   constructor (
     private readonly dockerService: DockerService,
+    private readonly containerLifeCycleService: ContainerLifeCycleService,
+    private readonly deployService: DeployService,
     private readonly prismaService: PrismaService,
   ) { };
 
@@ -300,7 +304,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     deleteScope: 'containers' | 'service',
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.deleteService(serviceName, deployPreset, deleteScope, emit);
+    await this.containerLifeCycleService.deleteService(serviceName, deployPreset, deleteScope, emit);
     await this.prismaService.serviceLogSessionMarker.deleteMany({ where: { serviceIndex } });
 
     if (deleteScope === 'service') {
@@ -318,7 +322,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     request: DeployCommand,
     emit: HubEmit,
   ) {
-    const success = await this.dockerService.redeployService(request, emit, (services) => {
+    const success = await this.deployService.deploy(request, emit, true, (services) => {
       this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
     });
     if (success) {
@@ -331,7 +335,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     request: DeployCommand,
     emit: HubEmit,
   ) {
-    const success = await this.dockerService.deployNewService(request, emit, (services) => {
+    const success = await this.deployService.deploy(request, emit, true, (services) => {
       this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
     });
     if (success) {
@@ -345,7 +349,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.restartService(serviceName, deployPreset, emit);
+    await this.containerLifeCycleService.restartService(serviceName, deployPreset, emit);
   }
 
   async v1StopService(
@@ -353,6 +357,6 @@ export class ServiceLifecycleService implements OnModuleInit {
     deployPreset: DEPLOY_OPTION,
     emit: (event: 'service-status' | 'service-log', payload: object) => void,
   ) {
-    await this.dockerService.stopService(serviceName, deployPreset, emit);
+    await this.containerLifeCycleService.stopService(serviceName, deployPreset, emit);
   }
 }

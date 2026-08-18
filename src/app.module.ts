@@ -12,6 +12,7 @@ import { TunnelModule } from './tunnel/tunnel.module';
 import { UtilityModule } from './utility/utility.module';
 import { SshTerminalService } from './terminal/ssh-terminal.service';
 import { DockerModule } from './docker/docker.module';
+import { ContainerLifeCycleService } from './docker/container-lifecycle.service';
 
 @Module({
   imports: [
@@ -25,6 +26,6 @@ import { DockerModule } from './docker/docker.module';
     DockerModule,
   ],
   controllers: [AppController],
-  providers: [AppService, DashboardGateway, TunnelService, SshTerminalService],
+  providers: [AppService, DashboardGateway, TunnelService, SshTerminalService, ContainerLifeCycleService],
 })
 export class AppModule {}

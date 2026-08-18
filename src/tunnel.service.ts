@@ -17,6 +17,7 @@ import { ConfigService } from '@nestjs/config';
 import { ReverseTunnelService } from './tunnel/reverse-tunnel.service';
 import { SystemMetricsUtility } from './utility/systemMetric.util';
 import { SshTerminalService } from './terminal/ssh-terminal.service';
+import { ContainerLifeCycleService } from './docker/container-lifecycle.service';
 
 type ServiceLogPayload = {
   serviceIndex?: number;
@@ -58,6 +59,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly reverseTunnelService: ReverseTunnelService,
     private readonly systemMetricsUtility: SystemMetricsUtility,
     private readonly sshTerminalService: SshTerminalService,
+    private readonly containerLifeCycleService: ContainerLifeCycleService,
     private readonly configService: ConfigService,
   ) {
     this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}`;
@@ -313,7 +315,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
           await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
-          await this.dockerService.startContainer(
+          await this.containerLifeCycleService.startContainer(
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
@@ -338,7 +340,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
           await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
-          await this.dockerService.stopContainer(
+          await this.containerLifeCycleService.stopContainer(
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {
@@ -363,7 +365,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           const containerName = String(payload.containerName ?? '');
           if (!containerName) break;
           await this.serviceLifecycleService.syncContainerStatus(svcIdx, serviceName, deployPreset);
-          await this.dockerService.restartContainer(
+          await this.containerLifeCycleService.restartContainer(
             containerName,
             deployPreset,
             (event: string, emitPayload: unknown) => {

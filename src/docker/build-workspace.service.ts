@@ -1,7 +1,28 @@
 import { Injectable } from "@nestjs/common";
+import { spawnSync } from "child_process";
+import path from "path";
+import fs from 'fs';
+import { isContainerRuntime } from "./utility/global.util";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class BuildWorkspaceService {
+  private buildRoot: string;
+
+  constructor (
+    private readonly configService: ConfigService,
+  ) {
+    this.buildRoot = configService.get<string>('OPTICS_BUILD_DIR') ?? path.join(process.cwd(), 'dist/build');
+  }
+
+cloneWorkspaceMount() {
+  if (isContainerRuntime()) {
+    return process.env.OPTICS_BUILD_VOLUME ?? 'optics-build';
+  }
+
+  fs.mkdirSync(this.buildRoot, { recursive: true });
+  return this.buildRoot;
+}
   removeBuildDir(targetDir: string, sendLog?: (line: string) => void) {
     try {
       fs.rmSync(targetDir, { recursive: true, force: true });
