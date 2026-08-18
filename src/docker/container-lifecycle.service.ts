@@ -8,14 +8,16 @@ import Docker from 'dockerode';
 import path from "path";
 import log from "spectra-log";
 import { emitOutputLines } from "./utility/docker-output.util";
-import { createServiceLogEmitter } from "./utility/emitters";
+import { createServiceLogEmitter, createServiceStatusEmitter } from "./utility/emitters";
+import { HubEmit } from "./types/HubEmit.type";
+import { ServiceStatus } from "./types/ServiceStatus.type";
 
 @Injectable()
 export class ContainerLifeCycleService {
   private docker: Docker;
   private buildRoot: string;
 
-  constructor (
+  constructor(
     private readonly configService: ConfigService,
     private readonly buildWorkspaceService: BuildWorkspaceService,
   ) {
@@ -28,17 +30,10 @@ export class ContainerLifeCycleService {
   async stopService(
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName: serviceName,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName })
+    const { sendStatus } = createServiceStatusEmitter(emit, { serviceName });
     const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
@@ -52,7 +47,7 @@ export class ContainerLifeCycleService {
       } else {
         await this.docker.getContainer(serviceName).stop();
       }
-      sendStatus('stopped');
+      sendStatus(ServiceStatus.STOPPED);
       sendLog(`Service '${serviceName}' stopped successfully.`);
       log(`[DockerService] stopService success | name=${serviceName}`);
     } catch (e) {
@@ -65,16 +60,9 @@ export class ContainerLifeCycleService {
   async startContainer(
     containerName: string,
     _deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName: containerName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName,
-    });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName: containerName });
 
     try {
       sendLog(`Starting container '${containerName}'...`);
@@ -90,16 +78,9 @@ export class ContainerLifeCycleService {
   async stopContainer(
     containerName: string,
     _deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName: containerName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName,
-    });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName: containerName });
 
     try {
       sendLog(`Stopping container '${containerName}'...`);
@@ -115,37 +96,30 @@ export class ContainerLifeCycleService {
   async restartService(
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
     const si = serviceName.toLowerCase();
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName: si,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName });
+    const { sendStatus } = createServiceStatusEmitter(emit, { serviceName });
     const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
-      sendStatus('restarting');
+      sendStatus(ServiceStatus.RESTARTING);
       sendLog(`Restarting service '${si}'...`);
       if (isCompose) {
         await new Promise<void>((resolve, reject) => {
           const proc = spawn('docker', ['compose', '-p', si, 'restart']);
-        proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
+          proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
           proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose restart exited with code ${code}`)));
         });
       } else {
         await this.docker.getContainer(si).restart();
       }
-      sendStatus('running');
+      sendStatus(ServiceStatus.RUNNING);
       sendLog(`Service '${si}' restarted successfully.`);
       log(`[DockerService] restartService success | name=${si}`);
     } catch (e) {
-      sendStatus('failed');
+      sendStatus(ServiceStatus.FAILED);
       sendLog(`ERROR: ${String(e)}`);
       log(`[DockerService] restartService failed | name=${si} | ${String(e)}`);
     }
@@ -154,16 +128,9 @@ export class ContainerLifeCycleService {
   async restartContainer(
     containerName: string,
     _deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName: containerName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName,
-    });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName: containerName });
 
     try {
       sendLog(`Restarting container '${containerName}'...`);
@@ -180,18 +147,11 @@ export class ContainerLifeCycleService {
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
     deleteScope: 'containers' | 'service',
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
     const si = serviceName.toLowerCase();
-    const sendLog = (line: string) => emit('service-log', {
-      serviceName,
-      log: line,
-      timestamp: new Date().toISOString(),
-      source: 'agent',
-      stream: 'lifecycle',
-      containerName: si,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceName, status });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName: si });
+    const { sendStatus } = createServiceStatusEmitter(emit, { serviceName: si });
     const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
@@ -227,11 +187,11 @@ export class ContainerLifeCycleService {
       if (deleteScope === 'service') {
         this.buildWorkspaceService.removeBuildDir(path.join(this.buildRoot, si), sendLog);
       }
-      sendStatus('removed');
+      sendStatus(ServiceStatus.DELETED);
       sendLog(`Service '${si}' deleted successfully.`);
       log(`[DockerService] deleteService success | name=${si}`);
     } catch (e) {
-      sendStatus('failed');
+      sendStatus(ServiceStatus.FAILED);
       sendLog(`ERROR: ${String(e)}`);
       log(`[DockerService] deleteService failed | name=${si} | ${String(e)}`);
     }

@@ -16,6 +16,8 @@ import fs from "fs";
 import { emitOutputLines } from "./utility/docker-output.util";
 import { isContainerRuntime } from "./utility/runtime.util";
 import { DeployOptions } from "./types/DeployOptions.type";
+import { createServiceLogEmitter, createServiceStatusEmitter } from "./utility/emitters";
+import { ServiceStatus } from "./types/ServiceStatus.type";
 @Injectable()
 export class DeployService {
   private docker: Docker;
@@ -36,21 +38,13 @@ export class DeployService {
   };
 
   async deploy(data: DeployCommand, emit: HubEmit, deployOptions?: DeployOptions, onExpectedServices?: ExpectedServicesCallback) {
-    const serviceIndex = data.serviceIndex;
     const serviceName = data.serviceName.toLowerCase();
-    const sendLog = (line: string) => emit('service-log', {
-      serviceIndex,
-      log: line,
-      timestame: new Date().toISOString(),
-      source: 'agent',
-      stream: deployOptions?.redeploy ? 'redeploy' : 'deploy',
-      containerName: serviceName,
-    });
-    const sendStatus = (status: string) => emit('service-status', { serviceIndex, status });
+    const { sendLog } = createServiceLogEmitter(emit, { serviceName });
+    const { sendStatus } = createServiceStatusEmitter(emit, { serviceName });
     let composeBuildDir: string | null = null;
     const clonedDir = await this.cloneAll(data.sourceUrl, path.join(this.buildRoot, serviceName), sendLog);
     try {
-      sendStatus('building');
+      sendStatus(ServiceStatus.BUILDING);
       sendLog(`Redeploying service ${serviceName}@${data.serviceVersion}`);
 
       try {
@@ -128,6 +122,7 @@ export class DeployService {
           });
         });
         sendLog('Build done. Starting container...');
+        sendStatus(ServiceStatus.STARTING);
         await this.runService(
           data.serviceName,
           data.serviceVersion,
@@ -136,8 +131,8 @@ export class DeployService {
         );
       }
 
-      sendStatus('running');
       sendLog('Service redeployed successfully.');
+      sendStatus(ServiceStatus.RUNNING);
       log('Redeploy success.');
       return true;
     } catch (error) {
