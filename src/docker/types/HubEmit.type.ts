@@ -1,0 +1,1 @@
+export type HubEmit = (event: 'service-status' | 'service-log' | 'container-status', payload: object) => void;
