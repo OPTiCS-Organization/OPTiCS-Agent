@@ -1,16 +1,18 @@
 import { Injectable } from "@nestjs/common";
-import { spawn, spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { DeployCommand } from "src/service/dtos/DeployCommand.dto";
 import { resolvePortMappings } from "./utility/deploy-command.util";
-import { subprocessEnv } from "./utility/docker-cli";
-import { emitOutputLines } from "./utility/docker-output.util";
+import { DockerCli } from "./docker-cli.service";
 
 const OVERRIDE_FAILED = 'Failed to generate compose restart override.';
 
 @Injectable()
 export class ComposeProjectService {
+  constructor(
+    private readonly dockerCli: DockerCli,
+  ) { }
+
   // 빌드 컨텍스트에 compose 파일이 있는지 본다.
   // .yml과 .yaml 두 확장자를 모두 인정한다.
   hasComposeFile(buildDir: string): boolean {
@@ -61,11 +63,11 @@ export class ComposeProjectService {
   // compose 프로젝트를 빌드하고 백그라운드로 띄운다.
   // 종료 코드가 0이 아니면 배포 실패로 예외를 던진다.
   async up(projectName: string, buildDir: string, sendLog: (line: string) => void): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('docker', ['compose', '-p', projectName, 'up', '-d', '--build'], { cwd: buildDir, env: subprocessEnv() });
-      proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-      proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose exited with code ${code}`)));
+    await this.dockerCli.run(['compose', '-p', projectName, 'up', '-d', '--build'], {
+      label: 'docker compose',
+      cwd: buildDir,
+      onLine: sendLog,
+      mirrorToAgentLog: true,
     });
   }
 
@@ -74,15 +76,12 @@ export class ComposeProjectService {
   async down(projectName: string, cwd: string, sendLog: (line: string) => void): Promise<void> {
     if (!fs.existsSync(cwd)) return;
     sendLog(`[ComposeProjectService] Cleaning up failed compose project '${projectName}'...`);
-    await new Promise<void>((resolve) => {
-      const proc = spawn('docker', ['compose', '-p', projectName, 'down', '--remove-orphans'], { cwd, env: subprocessEnv() });
-      proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-      proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog, true));
-      proc.on('close', () => resolve());
-      proc.on('error', (error) => {
-        sendLog(`[ComposeProjectService] Failed to clean up compose project '${projectName}': ${String(error)}`);
-        resolve();
-      });
+    await this.dockerCli.run(['compose', '-p', projectName, 'down', '--remove-orphans'], {
+      label: `docker compose down for '${projectName}'`,
+      cwd,
+      onLine: sendLog,
+      mirrorToAgentLog: true,
+      ignoreExitCode: true,
     });
   }
 
@@ -90,10 +89,7 @@ export class ComposeProjectService {
   // 목록을 못 읽으면 override를 만들 수 없으므로 배포를 중단시킨다.
   private listServices(buildDir: string, sendLog: (line: string) => void): string[] {
     try {
-      const result = spawnSync(
-        'docker', ['compose', 'config', '--services'],
-        { cwd: buildDir, encoding: 'utf8', env: subprocessEnv() },
-      );
+      const result = this.dockerCli.runSync(['compose', 'config', '--services'], { cwd: buildDir });
 
       if (result.status !== 0) {
         const errorMessage = result.stderr?.trim() || 'docker compose config --services failed.';

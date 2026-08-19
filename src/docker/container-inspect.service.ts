@@ -1,5 +1,4 @@
 import { Injectable } from "@nestjs/common";
-import { spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
@@ -7,10 +6,15 @@ import { ContainerState } from "./types/ContainerState.type";
 import { parseJsonOutput } from "./utility/docker-output.util";
 import { healthFromStatus, labelsToRecord, normalizeContainerStatus } from "./utility/container-status.util";
 import { isComposePreset } from "./utility/deploy-command.util";
+import { DockerCli } from "./docker-cli.service";
 
 @Injectable()
 export class ContainerInspectService {
   private readonly buildRoot = process.env.OPTICS_BUILD_DIR ?? path.join(process.cwd(), 'dist/build');
+
+  constructor(
+    private readonly dockerCli: DockerCli,
+  ) { }
 
   // 서비스 하나에 속한 컨테이너들의 현재 상태를 조회한다.
   // compose 서비스는 여러 개가, Dockerfile 서비스는 하나가 돌아온다.
@@ -23,7 +27,7 @@ export class ContainerInspectService {
   // 단일 컨테이너를 docker inspect로 조회한다.
   // 컨테이너가 없으면 빈 배열이라 호출부에서 '삭제됨'으로 해석할 수 있다.
   private inspectDockerfileContainer(serviceName: string): ContainerState[] {
-    const result = spawnSync('docker', ['inspect', serviceName], { encoding: 'utf8' });
+    const result = this.dockerCli.runSync(['inspect', serviceName]);
     if (result.status !== 0) return [];
     return parseJsonOutput<Record<string, any>>(result.stdout).map(container => {
       const state = container.State ?? {};
@@ -43,10 +47,9 @@ export class ContainerInspectService {
   private listComposeContainers(projectName: string): ContainerState[] {
     const buildDir = path.join(this.buildRoot, projectName);
     if (fs.existsSync(buildDir)) {
-      const composeResult = spawnSync(
-        'docker',
+      const composeResult = this.dockerCli.runSync(
         ['compose', '-p', projectName, 'ps', '-a', '--format', 'json'],
-        { cwd: buildDir, encoding: 'utf8' },
+        { cwd: buildDir },
       );
       if (composeResult.status === 0) {
         const composeRows = parseJsonOutput<Record<string, any>>(composeResult.stdout);
@@ -66,10 +69,8 @@ export class ContainerInspectService {
       }
     }
 
-    const psResult = spawnSync(
-      'docker',
+    const psResult = this.dockerCli.runSync(
       ['ps', '-a', '--filter', `label=com.docker.compose.project=${projectName}`, '--format', '{{json .}}'],
-      { encoding: 'utf8' },
     );
     if (psResult.status !== 0) return [];
     return parseJsonOutput<Record<string, any>>(psResult.stdout).map(row => {

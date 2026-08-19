@@ -8,10 +8,12 @@ import { DockerLogService } from './docker-log.service';
 import { DockerEventService } from './docker-event.service';
 import { ComposeProjectService } from './compose-project.service';
 import { ImageBuildService } from './image-build.service';
+import { DockerCli } from './docker-cli.service';
 
 @Module({
   imports: [ConfigModule],
   providers: [
+    DockerCli,
     DeployService,
     BuildWorkspaceService,
     ContainerLifeCycleService,

@@ -1,13 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DEPLOY_OPTION } from "src/global/DeployOptionEnum";
-import { spawn } from "child_process";
-import { subprocessEnv } from "./utility/docker-cli";
 import { BuildWorkspaceService } from "./build-workspace.service";
 import Docker from 'dockerode';
 import path from "path";
 import log from "spectra-log";
-import { emitOutputLines } from "./utility/docker-output.util";
+import { DockerCli } from "./docker-cli.service";
 import { createServiceLogEmitter, createServiceStatusEmitter } from "./utility/emitters";
 import { HubEmit } from "./types/HubEmit.type";
 import { ServiceStatus } from "./types/ServiceStatus.type";
@@ -20,6 +18,7 @@ export class ContainerLifeCycleService {
   constructor(
     private readonly configService: ConfigService,
     private readonly buildWorkspaceService: BuildWorkspaceService,
+    private readonly dockerCli: DockerCli,
   ) {
     this.buildRoot = configService.get<string>('OPTICS_BUILD_DIR') ?? path.join(process.cwd(), 'dist/build');
     this.docker = new Docker({
@@ -40,10 +39,9 @@ export class ContainerLifeCycleService {
     try {
       sendLog(`Stopping service '${serviceName}'...`);
       if (isCompose) {
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', serviceName, 'stop']);
-          proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose stop exited with code ${code}`)));
+        await this.dockerCli.run(['compose', '-p', serviceName, 'stop'], {
+          label: 'docker compose stop',
+          onLine: sendLog,
         });
       } else {
         await this.docker.getContainer(serviceName).stop();
@@ -111,10 +109,9 @@ export class ContainerLifeCycleService {
       sendStatus(ServiceStatus.RESTARTING);
       sendLog(`Restarting service '${si}'...`);
       if (isCompose) {
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('docker', ['compose', '-p', si, 'restart']);
-          proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose restart exited with code ${code}`)));
+        await this.dockerCli.run(['compose', '-p', si, 'restart'], {
+          label: 'docker compose restart',
+          onLine: sendLog,
         });
       } else {
         await this.docker.getContainer(si).restart();
@@ -163,14 +160,12 @@ export class ContainerLifeCycleService {
     try {
       sendLog(`Deleting service '${si}'...`);
       if (isCompose) {
-        await new Promise<void>((resolve, reject) => {
-          const args = deleteScope === 'service'
-            ? ['compose', '-p', si, 'down', '--rmi', 'all', '--volumes']
-            : ['compose', '-p', si, 'down'];
-          const proc = spawn('docker', args, { env: subprocessEnv() });
-          proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
-          proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
-          proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`docker compose down exited with code ${code}`)));
+        const args = deleteScope === 'service'
+          ? ['compose', '-p', si, 'down', '--rmi', 'all', '--volumes']
+          : ['compose', '-p', si, 'down'];
+        await this.dockerCli.run(args, {
+          label: 'docker compose down',
+          onLine: sendLog,
         });
       } else {
         const container = this.docker.getContainer(si);

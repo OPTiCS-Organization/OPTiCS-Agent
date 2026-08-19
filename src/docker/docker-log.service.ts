@@ -1,11 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import { ChildProcessWithoutNullStreams, spawn, spawnSync } from "child_process";
+import { ChildProcessWithoutNullStreams } from "child_process";
 import log from "spectra-log";
 import { DEPLOY_OPTION } from "../global/DeployOptionEnum";
 import { DockerLogEntry } from "./types/DockerLogEntry.type";
 import { DockerLogProgress } from "./types/DockerLogProgress.type";
 import { runtimeLogEntry, sortLogEntries } from "./utility/docker-log.parser";
 import { outputLines } from "./utility/docker-output.util";
+import { DockerCli } from "./docker-cli.service";
 import { isComposePreset } from "./utility/deploy-command.util";
 
 // 초기 히스토리를 줄 단위 service-log 대신 묶음(service-log-history)으로 전송할 때의 배치 크기.
@@ -16,6 +17,10 @@ const HISTORY_TAIL = '10000';
 @Injectable()
 export class DockerLogService {
   private logStreams = new Map<string, ChildProcessWithoutNullStreams>();
+
+  constructor(
+    private readonly dockerCli: DockerCli,
+  ) { }
 
   // 과거 로그를 배치로 먼저 흘려보낸 뒤 새 줄만 따라가는 스트림을 연다.
   // 같은 컨테이너로 다시 부르면 기존 스트림을 닫고 새로 시작한다.
@@ -59,16 +64,17 @@ export class DockerLogService {
       : ['logs', '--follow', '--tail', '0', '--timestamps', containerName];
     const label = isCompose ? `project=${containerName}` : `name=${containerName}`;
 
-    const proc = spawn('docker', args, {});
-    this.logStreams.set(containerName, proc);
-    proc.stdout.on('data', (chunk: Buffer) => this.pushLines(chunk, containerName, onLog, false));
-    proc.stderr.on('data', (chunk: Buffer) => this.pushLines(chunk, containerName, onLog, true));
-    proc.on('close', () => {
-      if (this.logStreams.get(containerName) === proc) {
-        this.logStreams.delete(containerName);
-      }
-      log(`[DockerLogService] streamContainerLog closed | ${label}`);
+    const proc: ChildProcessWithoutNullStreams = this.dockerCli.stream(args, {
+      onStdout: (chunk) => this.pushLines(chunk, containerName, onLog, false),
+      onStderr: (chunk) => this.pushLines(chunk, containerName, onLog, true),
+      onClose: () => {
+        if (this.logStreams.get(containerName) === proc) {
+          this.logStreams.delete(containerName);
+        }
+        log(`[DockerLogService] streamContainerLog closed | ${label}`);
+      },
     });
+    this.logStreams.set(containerName, proc);
     log(`[DockerLogService] streamContainerLog started | ${label}`);
   }
 
@@ -109,7 +115,7 @@ export class DockerLogService {
   // docker logs를 동기로 실행해 stdout/stderr를 하나의 시간순 목록으로 합친다.
   // 로그가 한 줄도 없이 실패한 경우에만 에러 항목을 대신 돌려준다.
   private fetchLogEntries(containerName: string, args: string[]): DockerLogEntry[] {
-    const result = spawnSync('docker', args, { encoding: 'utf8' });
+    const result = this.dockerCli.runSync(args);
     const toEntries = (raw: string, stderr: boolean) => raw
       .split('\n')
       .filter(line => line.trim())

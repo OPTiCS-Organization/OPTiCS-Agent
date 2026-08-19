@@ -1,11 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { spawn, spawnSync } from "child_process";
 import path from "path";
 import fs from 'fs';
 import { isContainerRuntime } from "./utility/runtime.util";
 import { normalizeSourceRepositories, repoName } from "./utility/deploy-command.util";
-import { emitOutputLines } from "./utility/docker-output.util";
+import { DockerCli } from "./docker-cli.service";
 import { DeployCommand } from "src/service/dtos/DeployCommand.dto";
 
 @Injectable()
@@ -14,6 +13,7 @@ export class BuildWorkspaceService {
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly dockerCli: DockerCli,
   ) {
     this.buildRoot = configService.get<string>('OPTICS_BUILD_DIR') ?? path.join(process.cwd(), 'dist/build');
   }
@@ -40,9 +40,7 @@ export class BuildWorkspaceService {
     }
 
     const containerTarget = this.toContainerPath(targetDir, 'Build directory cleanup target');
-    const result = spawnSync('docker', ['run', '--rm', '-v', `${this.cloneWorkspaceMount()}:/workspace`, 'alpine:3.20', 'rm', '-rf', containerTarget], {
-      encoding: 'utf8',
-    });
+    const result = this.dockerCli.runSync(['run', '--rm', '-v', `${this.cloneWorkspaceMount()}:/workspace`, 'alpine:3.20', 'rm', '-rf', containerTarget]);
     if (result.status !== 0) {
       throw new Error(result.stderr?.trim() || `helper cleanup container exited with code ${result.status ?? 'unknown'}`);
     }
@@ -106,12 +104,9 @@ export class BuildWorkspaceService {
     const mount = `${this.cloneWorkspaceMount()}:/workspace`;
     sendLog(`[BuildWorkspaceService] Cloning source in git container...\nFrom: ${repoUrl}\nInto: ${containerTarget}`);
 
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn('docker', ['run', '--rm', ...this.dockerRunUserArgs(), '-v', mount, 'alpine/git', 'clone', repoUrl, containerTarget]);
-      proc.stdout.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
-      proc.stderr.on('data', (chunk: Buffer) => emitOutputLines(chunk, sendLog));
-      proc.on('error', reject);
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`git clone container exited with code ${code}`)));
+    await this.dockerCli.run(['run', '--rm', ...this.dockerRunUserArgs(), '-v', mount, 'alpine/git', 'clone', repoUrl, containerTarget], {
+      label: 'git clone container',
+      onLine: sendLog,
     });
   }
 
