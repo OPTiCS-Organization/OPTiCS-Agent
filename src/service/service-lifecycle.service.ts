@@ -1,12 +1,18 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DeployCommand } from './dtos/DeployCommand.dto';
-import { DockerLogEntry, DockerLogProgress, DockerService, DockerStatusEvent } from 'src/share/docker.service';
+import { ContainerInspectService } from 'src/docker/container-inspect.service';
+import { DockerLogService } from 'src/docker/docker-log.service';
+import { DockerEventService } from 'src/docker/docker-event.service';
+import { DockerLogProgress } from 'src/docker/types/DockerLogProgress.type';
+import { DockerStatusEvent } from 'src/docker/types/DockerStatusEvent.type';
 import { RouteRequest } from 'src/global/types/RouteRequest.dto';
 import { PrismaService } from 'src/share/prisma.service';
 import { DEPLOY_OPTION } from 'src/global/DeployOptionEnum';
 import log from 'spectra-log';
-
-type HubEmit = (event: 'service-status' | 'service-log' | 'service-log-markers' | 'container-status', payload: object) => void;
+import { DockerLogEntry } from 'src/docker/types/DockerLogEntry.type';
+import { ContainerLifeCycleService } from 'src/docker/container-lifecycle.service';
+import { DeployService } from 'src/docker/deploy.service';
+import { HubEmit } from 'src/docker/types/HubEmit.type';
 
 export interface ContainerState {
   name: string;
@@ -41,8 +47,12 @@ export class ServiceLifecycleService implements OnModuleInit {
   private containerSnapshots = new Map<number, ContainerSnapshot>();
   private trackedServices = new Map<number, { serviceName: string; deployPreset: DEPLOY_OPTION }>();
 
-  constructor (
-    private readonly dockerService: DockerService,
+  constructor(
+    private readonly containerInspectService: ContainerInspectService,
+    private readonly dockerLogService: DockerLogService,
+    private readonly dockerEventService: DockerEventService,
+    private readonly containerLifeCycleService: ContainerLifeCycleService,
+    private readonly deployService: DeployService,
     private readonly prismaService: PrismaService,
   ) { };
 
@@ -51,7 +61,7 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   onModuleInit() {
-    this.dockerService.registerStatusEmit((event: DockerStatusEvent) => {
+    this.dockerEventService.registerStatusEmit((event: DockerStatusEvent) => {
       const containerName = event.containerName;
       let serviceIdx: number | undefined;
       for (const [idx, service] of this.trackedServices.entries()) {
@@ -170,7 +180,7 @@ export class ServiceLifecycleService implements OnModuleInit {
 
   async syncContainerStatus(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, fallback: ContainerStatus = 'stopped') {
     this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
-    const containers = await this.dockerService.getContainerSnapshot(serviceName.toLowerCase(), deployPreset);
+    const containers = await this.containerInspectService.getContainerSnapshot(serviceName.toLowerCase(), deployPreset);
     const snapshot = this.snapshotFromContainers(serviceIndex, containers);
     this.emitSnapshot(snapshot);
     if (containers.length > 0 || fallback === 'removed') {
@@ -246,11 +256,11 @@ export class ServiceLifecycleService implements OnModuleInit {
     onHistory?: (entries: DockerLogEntry[]) => void,
   ): Promise<void> {
     log(`[ServiceLifecycleService] streamServiceLog | serviceIndex=${serviceIndex} | name=${serviceName}`);
-    await this.dockerService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog, onProgress, onHistory);
+    await this.dockerLogService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog, onProgress, onHistory);
   }
 
   loadOlderServiceLogs(serviceName: string, deployPreset: DEPLOY_OPTION, before: string, limit?: number): DockerLogEntry[] {
-    return this.dockerService.loadOlderContainerLogs(serviceName.toLowerCase(), deployPreset, before, limit);
+    return this.dockerLogService.loadOlderContainerLogs(serviceName.toLowerCase(), deployPreset, before, limit);
   }
 
   async loadRecentSessionMarkers(serviceIndex: number, limit = 1000): Promise<ServiceLogSessionMarker[]> {
@@ -289,7 +299,7 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   stopServiceLog(serviceName: string): void {
-    this.dockerService.stopContainerLog(serviceName.toLowerCase());
+    this.dockerLogService.stopContainerLog(serviceName.toLowerCase());
   }
 
   async v1DeleteService(
@@ -297,9 +307,9 @@ export class ServiceLifecycleService implements OnModuleInit {
     serviceIndex: number,
     deployPreset: DEPLOY_OPTION,
     deleteScope: 'containers' | 'service',
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.dockerService.deleteService(serviceName, deployPreset, deleteScope, emit);
+    await this.containerLifeCycleService.deleteService(serviceIndex, serviceName, deployPreset, deleteScope, emit);
     await this.prismaService.serviceLogSessionMarker.deleteMany({ where: { serviceIndex } });
 
     if (deleteScope === 'service') {
@@ -317,7 +327,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     request: DeployCommand,
     emit: HubEmit,
   ) {
-    const success = await this.dockerService.redeployService(request, emit, (services) => {
+    const success = await this.deployService.deploy(request, emit, { redeploy: true }, (services) => {
       this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
     });
     if (success) {
@@ -330,7 +340,7 @@ export class ServiceLifecycleService implements OnModuleInit {
     request: DeployCommand,
     emit: HubEmit,
   ) {
-    const success = await this.dockerService.deployNewService(request, emit, (services) => {
+    const success = await this.deployService.deploy(request, emit, { redeploy: false }, (services) => {
       this.emitExpectedContainers(request.serviceIndex, request.serviceName, request.deployPreset, services);
     });
     if (success) {
@@ -340,18 +350,20 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   async v1StartService(
+    serviceIndex: number,
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.dockerService.restartService(serviceName, deployPreset, emit);
+    await this.containerLifeCycleService.restartService(serviceIndex, serviceName, deployPreset, emit);
   }
 
   async v1StopService(
+    serviceIndex: number,
     serviceName: string,
     deployPreset: DEPLOY_OPTION,
-    emit: (event: 'service-status' | 'service-log', payload: object) => void,
+    emit: HubEmit,
   ) {
-    await this.dockerService.stopService(serviceName, deployPreset, emit);
+    await this.containerLifeCycleService.stopService(serviceIndex, serviceName, deployPreset, emit);
   }
 }

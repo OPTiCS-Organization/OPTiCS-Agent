@@ -1,0 +1,1 @@
+export type ExpectedServicesCallback = (services: string[]) => void;

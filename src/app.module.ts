@@ -6,21 +6,24 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { DashboardGateway } from './dashboard.gateway';
 import { TunnelService } from './tunnel.service';
 import { ServiceModule } from './service/service.module';
-import { SharedModule } from './share/shared.module';
 import { NotifyModule } from './notify/notify.module';
 import { TunnelModule } from './tunnel/tunnel.module';
 import { UtilityModule } from './utility/utility.module';
 import { SshTerminalService } from './terminal/ssh-terminal.service';
+import { DockerModule } from './docker/docker.module';
+import { ContainerLifeCycleService } from './docker/container-lifecycle.service';
+import { PrismaModule } from './share/prisma.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ ignoreEnvFile: false }),
     ScheduleModule.forRoot(),
     ServiceModule,
-    SharedModule,
     NotifyModule,
     TunnelModule,
     UtilityModule,
+    DockerModule,
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [AppService, DashboardGateway, TunnelService, SshTerminalService],
