@@ -1,0 +1,8 @@
+# COMPOSE 프리셋 검증용 픽스처.
+# 에이전트가 정리 헬퍼로 이미 쓰는 alpine:3.20을 베이스로 삼아 추가 pull이 없게 한다.
+services:
+  web:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do printf 'HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\noptics-e2e-ok' | nc -l -p 3000; done"]
+    ports:
+      - "${E2E_COMPOSE_PORT:-8099}:3000"
