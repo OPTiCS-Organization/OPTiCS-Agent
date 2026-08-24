@@ -7,6 +7,7 @@ import { DashboardGateway } from './dashboard.gateway.js';
 import { SystemMetricsUtility } from './utility/systemMetric.util.js';
 import { DockerCli } from './docker/docker-cli.service.js';
 import { SelfInspectService } from './docker/self-inspect.service.js';
+import { stripAnsi } from './docker/utility/docker-cli.js';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -108,7 +109,7 @@ export class AppService {
    * 교체 도중 이 프로세스는 죽으므로 실제 작업은 별도 헬퍼 컨테이너에 위임하고 즉시 반환한다.
    * 헬퍼는 compose 프로젝트 바깥에 떠 있어야 `compose up -d`가 헬퍼 자신을 재생성하지 않는다.
    */
-  async updateAgent(version: string) {
+  async updateAgent(version: string, onProgress?: (line: string) => void) {
     if (!TAG_PATTERN.test(version)) {
       throw new Error(`Rejected malformed image tag: ${version}`);
     }
@@ -138,5 +139,28 @@ export class AppService {
       throw new Error(`Failed to start updater container: ${result.stderr.trim()}`);
     }
     log(`[AppService] Update to ${version} delegated to ${UPDATER_CONTAINER}. This process will be replaced shortly.`);
+
+    // 업데이터 로그를 Hub로 흘려보낸다. 이 스트림은 교체 시점에 프로세스와 함께 끊기므로
+    // 대개 pull 구간까지만 도달한다. 그 이후 단계는 Hub가 소켓 상태로 판정한다.
+    if (onProgress) this.followUpdaterLogs(onProgress);
+  }
+
+  private followUpdaterLogs(onProgress: (line: string) => void) {
+    let buffered = '';
+    const forward = (chunk: Buffer) => {
+      buffered += chunk.toString('utf-8');
+      const lines = buffered.split('\n');
+      buffered = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = stripAnsi(line).trim();
+        if (trimmed) onProgress(trimmed);
+      }
+    };
+
+    this.dockerCli.stream(['logs', '-f', UPDATER_CONTAINER], {
+      onStdout: forward,
+      onStderr: forward,
+      onClose: () => { /* 컨테이너가 끝났거나 이 프로세스가 교체된다. 어느 쪽이든 할 일이 없다. */ },
+    });
   }
 }

@@ -5,6 +5,7 @@ import { join } from 'path';
 import log from 'spectra-log';
 import { Command } from './global/types/Command.dto';
 import { RouteRequest } from './global/types/RouteRequest.dto';
+import { PROTOCOL_VERSION } from './global/protocol';
 import { AppService } from './app.service';
 import { ServiceLifecycleService } from './service/service-lifecycle.service';
 import { ServiceGateway } from './service/service.gateway';
@@ -127,7 +128,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     */
     this.socket.on('connect', () => {
       log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${this.hubUrl}\n  Socket ID : ${this.socket.id}`);
-      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: 1 });
+      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: PROTOCOL_VERSION });
     });
 
     /*
@@ -526,7 +527,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     // 교체는 헬퍼 컨테이너에 위임되고 곧 이 프로세스가 사라진다. 응답을 기다리지 않는다.
     this.socket.on('update-agent', (payload: { version: string }) => {
       log(`[TunnelService] {{ yellow : bold : UPDATE:REQUESTED }}\n  Target Version : ${payload.version}`);
-      this.appService.updateAgent(payload.version).catch((error: unknown) => {
+      this.appService.updateAgent(payload.version, (line) => {
+        this.socket.emit('update-log', { line });
+      }).catch((error: unknown) => {
+        this.socket.emit('update-log', { line: `ERROR: ${String(error)}` });
         log(`[TunnelService] {{ red : bold : UPDATE:FAILED }}\n  ${String(error)}`);
       });
     });
