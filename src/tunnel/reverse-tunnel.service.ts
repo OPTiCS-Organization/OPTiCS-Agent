@@ -22,6 +22,9 @@ export class ReverseTunnelService {
     tunnelSocket.pipe(localSocket);
     localSocket.pipe(tunnelSocket);
 
+    tunnelSocket.once('close', () => localSocket.end());
+    localSocket.once('close', () => tunnelSocket.end());
+
     tunnelSocket.on('error', (error) => log(error));
     localSocket.on('error', (error) => log(error));
   }
