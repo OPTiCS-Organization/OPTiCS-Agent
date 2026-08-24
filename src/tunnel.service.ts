@@ -5,6 +5,7 @@ import { join } from 'path';
 import log from 'spectra-log';
 import { Command } from './global/types/Command.dto';
 import { RouteRequest } from './global/types/RouteRequest.dto';
+import { AppService } from './app.service';
 import { ServiceLifecycleService } from './service/service-lifecycle.service';
 import { ServiceGateway } from './service/service.gateway';
 import { COMMAND } from './global/Command.enum';
@@ -59,6 +60,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly sshTerminalService: SshTerminalService,
     private readonly containerLifeCycleService: ContainerLifeCycleService,
     private readonly configService: ConfigService,
+    private readonly appService: AppService,
   ) {
     this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}`;
     console.log(`hubUrl Set: ${this.hubUrl}`);
@@ -119,10 +121,13 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       this.socket.emit(event, payload);
     });
 
-    /* 허브와 소켓이 연결되면 연결 이벤트 발생, UUID를 같이 전송함. */
+    /**
+     * 허브와 소켓이 연결되면 연결 이벤트 발생, UUID를 같이 전송함.
+     * 프로토콜 버전에 대한 문서는 OPTiCS-Hub/docs/protocol_v1.md 계약을 참조하십시오.
+    */
     this.socket.on('connect', () => {
       log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${this.hubUrl}\n  Socket ID : ${this.socket.id}`);
-      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION });
+      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: 1 });
     });
 
     /*
@@ -516,6 +521,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
     this.socket.on('tunnel-connect', (payload: { token: string, service_port: number, tunnel_port: number }) => {
       this.reverseTunnelService.open({ servicePort: payload.service_port, token: payload.token, tunnelPort: payload.tunnel_port })
+    });
+
+    // 교체는 헬퍼 컨테이너에 위임되고 곧 이 프로세스가 사라진다. 응답을 기다리지 않는다.
+    this.socket.on('update-agent', (payload: { version: string }) => {
+      log(`[TunnelService] {{ yellow : bold : UPDATE:REQUESTED }}\n  Target Version : ${payload.version}`);
+      this.appService.updateAgent(payload.version).catch((error: unknown) => {
+        log(`[TunnelService] {{ red : bold : UPDATE:FAILED }}\n  ${String(error)}`);
+      });
     });
   }
 
