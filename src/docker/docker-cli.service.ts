@@ -48,7 +48,7 @@ export class DockerCli {
   }
 
   // 명령을 실행하며 출력을 줄 단위로 흘려보내고 종료까지 기다린다.
-  // 종료코드가 0이 아니면 reject하되 ignoreExitCode면 조용히 넘어간다.
+  // 종료코드가 0이 아니면 reject하되 ignoreExitCode면 넘어간다.
   async run(args: string[], options: DockerCliRunOptions): Promise<void> {
     const { label, cwd, onLine, mirrorToAgentLog = false, ignoreExitCode = false } = options;
 

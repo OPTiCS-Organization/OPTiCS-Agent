@@ -1,7 +1,10 @@
+# 프로젝트 이름 고정
+name: optics-agent
+
 services:
   optics-agent:
-    build: .
-    image: optics-agent
+    # 사용자가 고정한 버전이 입력되는 유일한 곳
+    image: ghcr.io/optics-organization/optics-agent:${AGENT_IMAGE_TAG:-latest}
     ports:
       - "${AGENT_PORT:-5230}:5230"
     volumes:
@@ -19,8 +22,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   optics-agent-dashboard:
-    build: ../OPTiCS-Agent-Dashboard
-    image: optics-agent-dashboard
+    image: ghcr.io/optics-organization/optics-agent-dashboard:${DASHBOARD_IMAGE_TAG:-latest}
     ports:
       - "${DASHBOARD_PORT:-5240}:80"
     networks:

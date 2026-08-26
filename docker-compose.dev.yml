@@ -1,0 +1,17 @@
+# 로컬 개발용 오버레이.
+#
+# 운영 compose는 GHCR에서 이미지를 받지만, 개발 중에는 그 태그가 아직 존재하지 않는다.
+# 여기서 build를 되살려 소스에서 직접 빌드한다.
+#
+# 자동으로 적용되면 설치본에서도 소스 빌드를 타 버리므로 override가 아닌 별도 파일로 두고
+# 명시적으로 지정해서 쓴다.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  optics-agent:
+    build: .
+    image: optics-agent:dev
+
+  optics-agent-dashboard:
+    build: ../OPTiCS-Agent-Dashboard
+    image: optics-agent-dashboard:dev

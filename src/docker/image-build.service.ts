@@ -82,7 +82,7 @@ export class ImageBuildService {
     log('Started Service');
   }
 
-  // 기존 컨테이너가 있으면 멈추고 지운다. 없으면 조용히 넘어간다.
+  // 기존 컨테이너가 있으면 멈추고 지운다. 없으면 넘어간다.
   // 재배포 시 이름 충돌을 없애기 위한 사전 정리다.
   async removeExistingContainer(serviceName: string, sendLog: (line: string) => void): Promise<void> {
     try {

@@ -1,10 +1,13 @@
 {
   "name": "agent",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
+  "optics": {
+    "protocol": 1
+  },
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",

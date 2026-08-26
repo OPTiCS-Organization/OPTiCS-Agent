@@ -9,11 +9,13 @@ import { DockerEventService } from './docker-event.service';
 import { ComposeProjectService } from './compose-project.service';
 import { ImageBuildService } from './image-build.service';
 import { DockerCli } from './docker-cli.service';
+import { SelfInspectService } from './self-inspect.service';
 
 @Module({
   imports: [ConfigModule],
   providers: [
     DockerCli,
+    SelfInspectService,
     DeployService,
     BuildWorkspaceService,
     ContainerLifeCycleService,
@@ -24,6 +26,8 @@ import { DockerCli } from './docker-cli.service';
     ImageBuildService,
   ],
   exports: [
+    DockerCli,
+    SelfInspectService,
     DeployService,
     BuildWorkspaceService,
     ContainerLifeCycleService,

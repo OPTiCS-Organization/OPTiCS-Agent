@@ -20,6 +20,6 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
-COPY entrypoints/entrypoint.sh ./
-RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
-ENTRYPOINT ["sh", "entrypoint.sh"]
+COPY entrypoints/ ./entrypoints/
+RUN sed -i 's/\r$//' entrypoints/*.sh && chmod +x entrypoints/*.sh
+ENTRYPOINT ["sh", "entrypoints/entrypoint.sh"]
