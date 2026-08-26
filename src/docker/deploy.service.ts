@@ -79,7 +79,7 @@ export class DeployService {
   }
 
   // 프리셋과 실제 파일 존재 여부로 compose 경로를 탈지 결정한다.
-  // COMPOSE를 골랐는데 파일이 없으면 조용히 Dockerfile로 넘어가지 않고 실패시킨다.
+  // COMPOSE를 골랐는데 파일이 없으면 Dockerfile로 넘어가지 않고 실패시킨다.
   private shouldUseCompose(deployPreset: DEPLOY_OPTION, buildDir: string): boolean {
     const preset = deployPreset.toUpperCase() as DEPLOY_OPTION;
     const composeFileExists = this.composeProjectService.hasComposeFile(buildDir);

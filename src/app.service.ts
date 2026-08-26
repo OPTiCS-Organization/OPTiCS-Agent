@@ -18,7 +18,7 @@ const UPDATER_IMAGE = 'docker:27-cli';
 const UPDATER_CONTAINER = 'optics-agent-updater';
 /** 교체 후 새 Agent가 살아남는지 지켜보는 시간(초). */
 const HEALTH_WAIT_SECONDS = 45;
-/** Hub가 보내온 값이 그대로 이미지 태그가 되므로 허용 문자를 좁게 막는다. */
+/** Hub가 보내온 값이 그대로 이미지 태그가 되므로 허용 문자를 막는다. */
 const TAG_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._-]{0,127}$/;
 
 /**
@@ -109,7 +109,14 @@ export class AppService {
    * 교체 도중 이 프로세스는 죽으므로 실제 작업은 별도 헬퍼 컨테이너에 위임하고 즉시 반환한다.
    * 헬퍼는 compose 프로젝트 바깥에 떠 있어야 `compose up -d`가 헬퍼 자신을 재생성하지 않는다.
    */
-  async updateAgent(version: string, onProgress?: (line: string) => void) {
+  async updateAgent(
+    version: string,
+    report?: {
+      progress: (line: string) => void;
+      /** 교체가 일어나지 못한 채 업데이터가 끝났을 때. */
+      failed: (message: string) => void;
+    },
+  ) {
     if (!TAG_PATTERN.test(version)) {
       throw new Error(`Rejected malformed image tag: ${version}`);
     }
@@ -142,25 +149,36 @@ export class AppService {
 
     // 업데이터 로그를 Hub로 흘려보낸다. 이 스트림은 교체 시점에 프로세스와 함께 끊기므로
     // 대개 pull 구간까지만 도달한다. 그 이후 단계는 Hub가 소켓 상태로 판정한다.
-    if (onProgress) this.followUpdaterLogs(onProgress);
+    if (report) this.followUpdaterLogs(report);
   }
 
-  private followUpdaterLogs(onProgress: (line: string) => void) {
+  private followUpdaterLogs(report: { progress: (line: string) => void; failed: (message: string) => void }) {
     let buffered = '';
+    let lastLine = '';
     const forward = (chunk: Buffer) => {
       buffered += chunk.toString('utf-8');
       const lines = buffered.split('\n');
       buffered = lines.pop() ?? '';
       for (const line of lines) {
         const trimmed = stripAnsi(line).trim();
-        if (trimmed) onProgress(trimmed);
+        if (!trimmed) continue;
+        lastLine = trimmed;
+        report.progress(trimmed);
       }
     };
 
     this.dockerCli.stream(['logs', '-f', UPDATER_CONTAINER], {
       onStdout: forward,
       onStderr: forward,
-      onClose: () => { /* 컨테이너가 끝났거나 이 프로세스가 교체된다. 어느 쪽이든 할 일이 없다. */ },
+      // 로그가 끝났는데 이 프로세스가 아직 살아 있다면 교체가 일어나지 않은 것이다. 곧 실패다.
+      // 성공했다면 compose가 이 컨테이너를 갈아치웠을 것이므로 여기까지 오지 못한다.
+      // 알리지 않으면 Hub는 타임아웃(10분)까지 '내려받는 중'에 머문다.
+      onClose: () => {
+        const inspected = this.dockerCli.runSync(['inspect', '-f', '{{.State.ExitCode}}', UPDATER_CONTAINER]);
+        const exitCode = Number(inspected.stdout.trim());
+        const suffix = Number.isFinite(exitCode) && exitCode !== 0 ? ` (exit ${exitCode})` : '';
+        report.failed(`${lastLine || '업데이터가 결과를 남기지 않고 종료했습니다.'}${suffix}`);
+      },
     });
   }
 }

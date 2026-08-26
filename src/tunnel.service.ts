@@ -44,6 +44,10 @@ function readAgentVersion(): string | null {
 
 const AGENT_VERSION = readAgentVersion();
 
+/**
+ * 리팩터링 필요...
+ */
+
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
   private socket!: Socket;
@@ -527,10 +531,11 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     // 교체는 헬퍼 컨테이너에 위임되고 곧 이 프로세스가 사라진다. 응답을 기다리지 않는다.
     this.socket.on('update-agent', (payload: { version: string }) => {
       log(`[TunnelService] {{ yellow : bold : UPDATE:REQUESTED }}\n  Target Version : ${payload.version}`);
-      this.appService.updateAgent(payload.version, (line) => {
-        this.socket.emit('update-log', { line });
+      this.appService.updateAgent(payload.version, {
+        progress: (line) => this.socket.emit('update-log', { line }),
+        failed: (message) => this.socket.emit('update-failed', { message }),
       }).catch((error: unknown) => {
-        this.socket.emit('update-log', { line: `ERROR: ${String(error)}` });
+        this.socket.emit('update-failed', { message: String(error) });
         log(`[TunnelService] {{ red : bold : UPDATE:FAILED }}\n  ${String(error)}`);
       });
     });

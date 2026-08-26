@@ -17,7 +17,7 @@ export type ComposeProject = {
  *
  * 자기 교체를 하려면 compose 프로젝트의 "호스트 측" 경로가 필요한데,
  * bind mount 경로는 도커 데몬이 호스트 기준으로 해석하므로 컨테이너 안에서 본 경로를 넘기면
- * 조용히 엉뚱한 디렉터리가 마운트된다. compose가 컨테이너에 심어둔 라벨이 유일하게 믿을 수 있는 출처다.
+ * 엉뚱한 디렉터리가 마운트된다. compose가 컨테이너에 심어둔 라벨이 유일하게 믿을 수 있는 출처다.
  */
 @Injectable()
 export class SelfInspectService {
