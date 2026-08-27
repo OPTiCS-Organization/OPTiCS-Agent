@@ -19,6 +19,7 @@ import { ReverseTunnelService } from './tunnel/reverse-tunnel.service';
 import { SystemMetricsUtility } from './utility/systemMetric.util';
 import { SshTerminalService } from './terminal/ssh-terminal.service';
 import { ContainerLifeCycleService } from './docker/container-lifecycle.service';
+import { RegisterPayload } from './interfaces/register-payload.interface';
 
 type ServiceLogPayload = {
   serviceIndex?: number;
@@ -51,7 +52,7 @@ const AGENT_VERSION = readAgentVersion();
 @Injectable()
 export class TunnelService implements OnModuleInit, OnModuleDestroy {
   private socket!: Socket;
-  private agentUuid: string | undefined;
+  private agentUuid: string | null = null;
   private hubUrl: string;
 
   constructor(
@@ -109,14 +110,15 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     /* 이미 서버에서 받아온 UUID가 있는지 조회 */
-    this.agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } }).then(result => result?.value)
-    if (this.agentUuid) log(`[TunnelService] {{ green : bold : AGENT:UUID_FOUND }}\n  Agent UUID : ${this.agentUuid}`);
-    else log(`[TunnelService] {{ yellow : bold : AGENT:UUID_MISSING }}`);
+    this.agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } }).then(result => result?.value ?? null)
+    if (this.agentUuid !== "") log(`[TunnelService] {{ green : bold : AGENT:UUID_FOUND }}\n uuid: ${this.agentUuid}`);
+    else log(`[TunnelService] {{ yellow : bold : AGENT:UUID_NOTFOUND }}`);
 
+    log(`[TunnelService] Connecting to Hub: ${this.hubUrl}`)
     this.socket = io(`${this.hubUrl}/agent`, {
       reconnection: true,
       reconnectionDelay: 3000,
-      auth: { agentUuid: this.agentUuid ?? null },
+      auth: { agentUuid: this.agentUuid },
     });
 
     /**
@@ -131,40 +133,52 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
      * 프로토콜 버전에 대한 문서는 OPTiCS-Hub/docs/protocol_v1.md 계약을 참조하십시오.
     */
     this.socket.on('connect', () => {
-      log(`[TunnelService] {{ green : bold : SOCKET:CONNECTED }}\n  Hub URL   : ${this.hubUrl}\n  Socket ID : ${this.socket.id}`);
-      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: PROTOCOL_VERSION });
+      log(`[Tunnel Service] Connection established with Hub.`);
+      log(`[Tunnel Service] Sending registration information.`);
+      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: PROTOCOL_VERSION, _sig: null });
     });
-
     /*
       허브에서 전송받은 UUID가 NULL이면 새 UUID, Code를 발급해서 register 이벤트를 발생시킴.
       전송받은 UUID가 없으면? => 아마 아무 이벤트를 발생시키지 않는 듯
     */
-    this.socket.on('register', async (payload: { agentCode: string, agentUuid: string, agentIp: string }) => {
-      log(`[TunnelService] {{ cyan : bold : REGISTER:RECEIVED }}\n  Agent Code : ${payload.agentCode}\n  Agent UUID : ${payload.agentUuid}\n  Agent IP   : ${payload.agentIp}`)
-      if (this.agentUuid !== payload.agentUuid) {
-        this.agentUuid = payload.agentUuid;
-        log(`[TunnelService] {{ yellow : bold : AGENT:UUID_UPDATED }}\n  Agent UUID : ${this.agentUuid}`);
+    this.socket.on('register', async (payload: RegisterPayload) => {
+      log(`[Tunnel Service] Registration information received.\n code: ${payload.code}`);
+      if (payload.code === 'ok') {
+        log(`[Tunnel Service] {{ cyan : bold : REGISTER:SUCCESS }}\n  code: ${payload.data.code}\n uuid: ${payload.data.uuid}\n  ipv4 address: ${payload.data.ip}`);
+        if (this.agentUuid !== payload.data.uuid) {
+          this.agentUuid = payload.data.uuid;
+          await this.prismaService.agentInfo.upsert({
+            where: { key: 'agent-uuid' },
+            create: { key: 'agent-uuid', value: payload.data.uuid },
+            update: { value: payload.data.uuid }
+          });
+          log(`[Tunnel Service] {{ yellow : bold : REGISTER:UUID_UPDATED }}\n  updated uuid: ${this.agentUuid}`);
+        }
+        await this.prismaService.agentInfo.upsert({
+          where: { key: 'agent-code' },
+          create: { key: 'agent-code', value: payload.data.code },
+          update: { value: payload.data.code },
+        });
+        log(`[Tunnel Service] {{ yellow : bold : REGISTER:CODE_UPDATED }}\n  updated code: ${payload.data.code}`);
+
+        await this.prismaService.agentInfo.upsert({
+          where: { key: 'agent-ip' },
+          create: { key: 'agent-ip', value: payload.data.ip },
+          update: { value: payload.data.ip }
+        });
+        log(`[Tunnel Service] {{ yellow : bold : REGISTER:IP_UPDATED }}\n  updated ip: ${payload.data.ip}`);
+
+        log(`[Tunnel Service] {{ green : bold : REGISTER:SYNCED }}\n  Successfully saved connection informations.`);
       }
-      await this.prismaService.agentInfo.upsert({
-        where: { key: 'agent-code' },
-        create: { key: 'agent-code', value: payload.agentCode },
-        update: { value: payload.agentCode },
-      });
-      await this.prismaService.agentInfo.upsert({
-        where: { key: 'agent-uuid' },
-        create: { key: 'agent-uuid', value: payload.agentUuid },
-        update: { value: payload.agentUuid }
-      })
-      await this.prismaService.agentInfo.upsert({
-        where: { key: 'agent-ip' },
-        create: { key: 'agent-ip', value: payload.agentIp },
-        update: { value: payload.agentIp }
-      })
-      log(`[TunnelService] {{ green : bold : REGISTER:SAVED }}\n  Agent Code : ${payload.agentCode}`);
+
+      if (payload.code === 'unsupported_protocol') {
+        this.socket.io.reconnection(false);
+        log(`[Tunnel Service] {{ red : bold : PROTOCOL:UNSUPPORTED_PROTOCOL }}\n  !!! No further reconnection attempts will be made.\n  This agent does not match the OPTiCS Hub Protocol Version.`);
+      }
     })
 
     this.socket.on('disconnect', () => {
-      log(`[TunnelService] {{ red : bold : SOCKET:DISCONNECTED }}`);
+      log(`[Tunnel Service] Connection to Hub were lost.`);
     });
 
     this.socket.on('system-metrics-request', (payload: { requestId: string }) => {
