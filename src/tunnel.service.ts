@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { io, Socket } from 'socket.io-client';
-import { readFileSync } from 'fs';
+import { openAsBlob, readFileSync } from 'fs';
 import { join } from 'path';
 import log from 'spectra-log';
 import { Command } from './global/types/Command.dto';
@@ -69,7 +69,6 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     private readonly appService: AppService,
   ) {
     this.hubUrl = `${configService.getOrThrow<string>('HUB_API_URL')}`;
-    console.log(`hubUrl Set: ${this.hubUrl}`);
   }
 
   private getServiceCommandPayload(payload: Command) {
@@ -111,10 +110,9 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     /* 이미 서버에서 받아온 UUID가 있는지 조회 */
     this.agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } }).then(result => result?.value ?? null)
-    if (this.agentUuid !== "") log(`[TunnelService] {{ green : bold : AGENT:UUID_FOUND }}\n uuid: ${this.agentUuid}`);
-    else log(`[TunnelService] {{ yellow : bold : AGENT:UUID_NOTFOUND }}`);
+    log(`[Tunnel Service] {{ yellow : bold : UUID${this.agentUuid ? `_FOUND}}:{{ dim : italic : ${this.agentUuid} }}` : "_NOT_FOUND}}"}`);
 
-    log(`[TunnelService] Connecting to Hub: ${this.hubUrl}`)
+    log(`[Tunnel Service] Connecting to Hub: ${this.hubUrl}`)
     this.socket = io(`${this.hubUrl}/agent`, {
       reconnection: true,
       reconnectionDelay: 3000,
@@ -142,9 +140,9 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       전송받은 UUID가 없으면? => 아마 아무 이벤트를 발생시키지 않는 듯
     */
     this.socket.on('register', async (payload: RegisterPayload) => {
-      log(`[Tunnel Service] Registration information received.\n code: ${payload.code}`);
+      log(`[Tunnel Service] Agent registration ${payload.code === 'ok' ? `successful: ${payload.data.code}` : `failed: ${payload.code}\n  ${payload.data}`}`);
       if (payload.code === 'ok') {
-        log(`[Tunnel Service] {{ cyan : bold : REGISTER:SUCCESS }}\n  code: ${payload.data.code}\n uuid: ${payload.data.uuid}\n  ipv4 address: ${payload.data.ip}`);
+        log(`[Tunnel Service] {{ cyan : bold : REGISTER:AUTHORIZED }}\n  code: ${payload.data.code}\n  uuid: ${payload.data.uuid}\n  ipv4 address: ${payload.data.ip}`);
         if (this.agentUuid !== payload.data.uuid) {
           this.agentUuid = payload.data.uuid;
           await this.prismaService.agentInfo.upsert({
@@ -154,6 +152,16 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           });
           log(`[Tunnel Service] {{ yellow : bold : REGISTER:UUID_UPDATED }}\n  updated uuid: ${this.agentUuid}`);
         }
+
+        if (payload.data.signingSecret) {
+          await this.prismaService.agentInfo.upsert({
+            where: { key: 'agent-signing-secret' },
+            create: { key: 'agent-signing-secret', value: payload.data.signingSecret },
+            update: { value: payload.data.signingSecret }
+          });
+          log(`[Tunnel Service] {{ yellow : bold : REGISTER:SIGNING_SECRET_SAVED}}\n saved code: ${payload.data.signingSecret}`)
+        }
+
         await this.prismaService.agentInfo.upsert({
           where: { key: 'agent-code' },
           create: { key: 'agent-code', value: payload.data.code },
@@ -167,6 +175,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           update: { value: payload.data.ip }
         });
         log(`[Tunnel Service] {{ yellow : bold : REGISTER:IP_UPDATED }}\n  updated ip: ${payload.data.ip}`);
+
 
         log(`[Tunnel Service] {{ green : bold : REGISTER:SYNCED }}\n  Successfully saved connection informations.`);
       }
