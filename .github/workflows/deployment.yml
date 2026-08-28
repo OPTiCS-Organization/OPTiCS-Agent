@@ -1,55 +1,130 @@
 name: Agent Image Builder
 on:
   release:
-    types:
-      - published
+    types: [published]
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
-  build-and-push:
-    runs-on: ubuntu-24.04
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
-      contents: write
       packages: write
     steps:
+      - name: Prepare Platform Slug
+        run: echo "SLUG=${platform//\//-}" >> $GITHUB_ENV
+        env:
+          platform: ${{ matrix.platform }}
+
       - name: Checkout Source
         uses: actions/checkout@v4
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Log In to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract Docker Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
-      - name: Build and Push
+          images: ${{ env.IMAGE }}
+
+      # 태그 없이 다이제스트만 푸시한다. 태그 부착은 merge 잡이 담당한다.
+      - name: Build and Push by Digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.SLUG }}
+          cache-to: type=gha,mode=max,scope=${{ env.SLUG }}
 
-      # 이미지 푸시가 성공한 뒤에만 붙인다.
-      # 그래야 release.json의 존재 자체가 "이 버전의 이미지가 GHCR에 있다"는 영수증이 되고,
-      # Hub 카탈로그는 이 자산이 붙은 릴리즈만 노출하면 설치 불가능한 버전을 권하지 않게 된다.
+      - name: Export Digest
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${digest#sha256:}"
+        env:
+          digest: ${{ steps.build.outputs.digest }}
+
+      - name: Upload Digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.SLUG }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Download Digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log In to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+
+      - name: Create Manifest List
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+  publish-metadata:
+    needs: merge
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
       - name: Publish Release Metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          # GHCR은 소문자만 받는다. metadata-action이 태그에 쓰는 이름과 같아야 하므로 동일하게 소문자화한다.
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           jq --arg image "$IMAGE" '{
             version: .version,
