@@ -1,6 +1,13 @@
 # 프로젝트 이름 고정
 name: optics-agent
 
+# 로그 파일 최대 크기 제한
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "1"
+
 services:
   optics-agent:
     # 사용자가 고정한 버전이 입력되는 유일한 곳
