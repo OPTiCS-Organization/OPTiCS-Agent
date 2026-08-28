@@ -6,6 +6,7 @@ import {
   TIMESTAMP_FIELD,
   VERIFY_FAILURE,
   canonicalize,
+  digest,
   sign,
   signingMaterial,
   verify,
@@ -208,5 +209,32 @@ describe('ReplayGuard', () => {
     replayGuard.remember('new', NOW + 2_000);
 
     expect(replayGuard.size).toBe(1);
+  });
+});
+
+/**
+ * GOLDEN VECTOR — Agent와 Hub 양쪽 spec에 동일하게 존재해야 한다.
+ *
+ * 두 저장소의 hash.util.ts는 서로의 사본이고, 정규화 규칙이 한 글자만 어긋나도
+ * 모든 서명이 조용히 불일치한다. 그 어긋남은 각자의 sign/verify 테스트로는
+ * 절대 잡히지 않는다(양쪽 다 자기 규칙으로 만들고 자기 규칙으로 검증하므로).
+ * 그래서 결과 문자열 자체를 못박아 둔다. 이 값이 바뀌면 상대 쪽도 반드시 같이 바뀌어야 한다.
+ */
+describe('고정 벡터', () => {
+  const EVENT = 'service-status';
+  const TIMESTAMP = 1_756_000_000_000;
+  const NONCE = 'fixednonce';
+  const PAYLOAD = { serviceIndex: 7, status: 'running', nested: { z: [3, 1, 2], a: null } };
+
+  it('서명 대상 문자열이 고정된 값과 일치한다', () => {
+    expect(signingMaterial(EVENT, TIMESTAMP, NONCE, PAYLOAD)).toBe(
+      'v1\nservice-status\n1756000000000\nfixednonce\n{"nested":{"a":null,"z":[3,1,2]},"serviceIndex":7,"status":"running"}',
+    );
+  });
+
+  it('다이제스트가 고정된 값과 일치한다', () => {
+    expect(digest(EVENT, TIMESTAMP, NONCE, PAYLOAD, SECRET)).toBe(
+      '87c3b0072ca0e67142ac489bb6c04043d1ff5bd86d79f2e4b42f833617e436ef',
+    );
   });
 });
