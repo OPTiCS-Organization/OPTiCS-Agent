@@ -1,10 +1,8 @@
 name: Agent Image Builder
+
 on:
   release:
     types: [published]
-
-env:
-  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build:
@@ -21,10 +19,12 @@ jobs:
     permissions:
       packages: write
     steps:
-      - name: Prepare Platform Slug
-        run: echo "SLUG=${platform//\//-}" >> $GITHUB_ENV
+      - name: Prepare Variables
         env:
           platform: ${{ matrix.platform }}
+        run: |
+          echo "SLUG=${platform//\//-}" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Checkout Source
         uses: actions/checkout@v4
@@ -58,11 +58,11 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ env.SLUG }}
 
       - name: Export Digest
+        env:
+          digest: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
           touch "/tmp/digests/${digest#sha256:}"
-        env:
-          digest: ${{ steps.build.outputs.digest }}
 
       - name: Upload Digest
         uses: actions/upload-artifact@v4
@@ -78,6 +78,9 @@ jobs:
     permissions:
       packages: write
     steps:
+      - name: Prepare Image Name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
       - name: Download Digests
         uses: actions/download-artifact@v4
         with:
@@ -109,8 +112,16 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+            $(printf "${IMAGE}@sha256:%s " *)
 
+      - name: Inspect Manifest
+        run: |
+          docker buildx imagetools inspect \
+            "$(jq -cr '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+
+  # 이미지 푸시가 성공한 뒤에만 붙인다.
+  # 그래야 release.json의 존재 자체가 "이 버전의 이미지가 GHCR에 있다"는 영수증이 되고,
+  # Hub 카탈로그는 이 자산이 붙은 릴리즈만 노출하면 설치 불가능한 버전을 권하지 않게 된다.
   publish-metadata:
     needs: merge
     runs-on: ubuntu-24.04
