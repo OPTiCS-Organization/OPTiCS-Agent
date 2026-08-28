@@ -132,7 +132,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     */
     this.socket.on('connect', () => {
       log(`[Tunnel Service] Connection established with Hub.`);
-      log(`[Tunnel Service] Sending registration information.`);
+      log(`[Tunnel Service] Sending registration information. (Protocol v${PROTOCOL_VERSION})`);
       this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: PROTOCOL_VERSION, _sig: null });
     });
     /*
@@ -140,7 +140,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       전송받은 UUID가 없으면? => 아마 아무 이벤트를 발생시키지 않는 듯
     */
     this.socket.on('register', async (payload: RegisterPayload) => {
-      log(`[Tunnel Service] Agent registration ${payload.code === 'ok' ? `successful: ${payload.data.code}` : `failed: ${payload.code}\n  ${payload.data}`}`);
+      log(`[Tunnel Service] {{ yellow : bold : REGISTER:RESPONSE_RECEIVED }}\n  state: ${payload.code}`);
       if (payload.code === 'ok') {
         log(`[Tunnel Service] {{ cyan : bold : REGISTER:AUTHORIZED }}\n  code: ${payload.data.code}\n  uuid: ${payload.data.uuid}\n  ipv4 address: ${payload.data.ip}`);
         if (this.agentUuid !== payload.data.uuid) {
@@ -159,7 +159,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             create: { key: 'agent-signing-secret', value: payload.data.signingSecret },
             update: { value: payload.data.signingSecret }
           });
-          log(`[Tunnel Service] {{ yellow : bold : REGISTER:SIGNING_SECRET_SAVED}}\n saved code: ${payload.data.signingSecret}`)
+          log(`[Tunnel Service] {{ yellow : bold : REGISTER:SIGNING_SECRET_SAVED}}\n  saved code: ${payload.data.signingSecret}`)
         }
 
         await this.prismaService.agentInfo.upsert({
@@ -182,12 +182,12 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
       if (payload.code === 'unsupported_protocol') {
         this.socket.io.reconnection(false);
-        log(`[Tunnel Service] {{ red : bold : PROTOCOL:UNSUPPORTED_PROTOCOL }}\n  !!! No further reconnection attempts will be made.\n  This agent does not match the OPTiCS Hub Protocol Version.`);
+        log(`[Tunnel Service] {{ red : bold : REGISTER:FAILED }}\n  This agent does not match the OPTiCS Hub Protocol Version.\n    Hub protocol version: v${payload.data.minimum}(MIN) v${payload.data.maximum}(MAX)\n    Current protocol version: v${PROTOCOL_VERSION}\n  No further reconnection attempts will be made.`, 400, 'FATAL');
       }
     })
 
     this.socket.on('disconnect', () => {
-      log(`[Tunnel Service] Connection to Hub were lost.`);
+      log(`[Tunnel Service] Connection to Hub were lost.\n  Reconnect: ${this.socket.io.reconnection() ? "Reconnecting..." : "Interrupted"}`);
     });
 
     this.socket.on('system-metrics-request', (payload: { requestId: string }) => {
