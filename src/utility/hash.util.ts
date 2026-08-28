@@ -8,9 +8,12 @@
  * Hub가 UUID 하나만 보고 `agentUuidToSocketId`에 등록하면 그 시점부터 남의 서비스로
  * 명령이 흘러갑니다. 서명은 그 갭을 막습니다.
  *
- * 이 파일은 Hub가 그대로 옮겨 심을 수 있도록 런타임 의존성 없이 순수 함수로만 둡니다.
- * 한쪽이라도 정규화 규칙이 어긋나면 모든 서명이 조용히 불일치하므로, 규칙을 바꾸려면
- * SIGNATURE_SCHEME_VERSION을 올리고 양쪽을 동시에 배포해야 합니다.
+ * 이 파일은 두 저장소가 공유하는 사본입니다. 런타임 의존성 없이 순수 함수로만 둡니다.
+ *   OPTiCS-Agent/src/utility/hash.util.ts
+ *   OPTiCS-Hub/src/global/hash.util.ts
+ * 두 파일은 **바이트 단위로 동일해야 하며**, 한쪽만 고치면 모든 서명이 조용히 불일치합니다.
+ * hash.util.spec.ts가 파일 지문과 고정 벡터로 이 동일성을 지킵니다.
+ * 규칙을 바꾸려면 SIGNATURE_SCHEME_VERSION을 올리고 양쪽을 함께 배포해야 합니다.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 

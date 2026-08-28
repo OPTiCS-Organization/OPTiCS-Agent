@@ -1,3 +1,6 @@
+import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   DEFAULT_MAX_CLOCK_SKEW_MS,
   NONCE_FIELD,
@@ -236,5 +239,26 @@ describe('고정 벡터', () => {
     expect(digest(EVENT, TIMESTAMP, NONCE, PAYLOAD, SECRET)).toBe(
       '87c3b0072ca0e67142ac489bb6c04043d1ff5bd86d79f2e4b42f833617e436ef',
     );
+  });
+});
+
+/**
+ * 두 저장소의 hash.util.ts가 갈라지지 않게 파일 지문 자체를 못박는다.
+ *
+ * 고정 벡터는 "규칙이 바뀌었다"를 잡지만, 바꾼 사람이 자기 저장소의 상수까지
+ * 같이 고치면 통과한다. 그래서 파일 내용의 해시를 직접 붙들어, 어느 쪽이든
+ * 손대는 순간 반드시 이 테스트를 마주하게 한다.
+ *
+ * 이 값을 갱신할 때는 **반드시 상대 저장소의 파일과 상수도 함께 갱신해야 한다.**
+ * 한쪽만 갱신하면 두 사본이 갈라진 채로 양쪽 CI가 모두 초록이 된다.
+ *   OPTiCS-Agent/src/utility/hash.util.ts
+ *   OPTiCS-Hub/src/global/hash.util.ts
+ */
+describe('사본 동일성', () => {
+  it('hash.util.ts의 지문이 고정된 값과 일치한다', () => {
+    const source = readFileSync(join(__dirname, 'hash.util.ts'));
+    const fingerprint = createHash('sha256').update(source).digest('hex');
+
+    expect(fingerprint).toBe('8332033c9bc773a237abc6f6d99724c98c8da1fa209a202a5c5647663b3f22cf');
   });
 });
