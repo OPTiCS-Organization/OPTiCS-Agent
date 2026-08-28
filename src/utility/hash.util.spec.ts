@@ -37,7 +37,7 @@ describe('canonicalize', () => {
     expect(canonicalize({ a: 1, b: undefined })).toBe('{"a":1}');
   });
 
-  // Hub는 connect-request에서 Date 객체를 그대로 넘긴다(protocol_v1.md §5-4).
+  // Hub는 connect-request에서 Date 객체를 그대로 넘긴다(protocol_v0.md §5-4).
   it('Date는 toJSON을 거쳐 문자열이 된다', () => {
     expect(canonicalize({ at: new Date(NOW) })).toBe(`{"at":"${new Date(NOW).toISOString()}"}`);
   });
