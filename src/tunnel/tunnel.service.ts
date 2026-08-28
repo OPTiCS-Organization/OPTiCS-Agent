@@ -1,11 +1,10 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { io, Socket } from 'socket.io-client';
-import { openAsBlob, readFileSync } from 'fs';
-import { join } from 'path';
 import log from 'spectra-log';
 import { Command } from '../global/types/Command.dto';
 import { RouteRequest } from '../global/types/RouteRequest.dto';
 import { PROTOCOL_VERSION } from '../global/protocol';
+import { AGENT_VERSION } from '../global/agent-version';
 import { AppService } from '../app.service';
 import { ServiceLifecycleService } from '../service/service-lifecycle.service';
 import { ServiceGateway } from '../service/service.gateway';
@@ -34,18 +33,6 @@ type ServiceLogPayload = {
   composeService?: string;
   stderr?: boolean;
 };
-
-/** dist/src에서 두 단계 위(프로젝트 루트)의 package.json을 읽어 빌드 없이도 버전을 항상 최신으로 유지한다. */
-function readAgentVersion(): string | null {
-  try {
-    const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version?: string };
-    return pkg.version ?? null;
-  } catch {
-    return null;
-  }
-}
-
-const AGENT_VERSION = readAgentVersion();
 
 /**
  * 리팩터링 필요...
