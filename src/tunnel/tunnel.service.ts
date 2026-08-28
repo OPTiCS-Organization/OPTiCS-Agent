@@ -169,7 +169,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
      * 허브와 소켓이 연결되면 연결 이벤트 발생, UUID를 같이 전송함.
      * 프로토콜 버전에 대한 문서는 OPTiCS-Hub/docs/protocol_v1.md 계약을 참조하십시오.
     */
-    this.socket.on('connect', () => {
+    this.onFromHub('connect', () => {
       log(`[Tunnel Service] Connection established with Hub.`);
       log(`[Tunnel Service] Sending registration information. (Protocol v${PROTOCOL_VERSION})`);
       /* _sig는 emitToHub가 붙인다. 최초 등록처럼 비밀이 없으면 서명 없이 나간다. */
@@ -254,7 +254,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       }
     })
 
-    this.socket.on('disconnect', () => {
+    this.onFromHub('disconnect', () => {
       log(`[Tunnel Service] Connection to Hub were lost.\n  Reconnect: ${this.socket.io.reconnection() ? "Reconnecting..." : "Interrupted"}`);
     });
 
