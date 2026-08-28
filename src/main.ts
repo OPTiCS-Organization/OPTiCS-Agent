@@ -6,7 +6,8 @@ import log from 'spectra-log';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  log.setDebugLevel('TRACE');
+  log.setDebugLevel('INFO');
+  log.setDisplayStandBy(false);
 
   app.useGlobalPipes(new ValidationPipe());
   app.enableVersioning({ type: VersioningType.URI });

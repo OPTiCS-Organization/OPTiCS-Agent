@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      # Prisma Client가 생성되어 있지 않으면 타입 검사가 통째로 실패한다.
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Type Check
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Test
+        run: npm test

@@ -4,7 +4,7 @@ import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DashboardGateway } from './dashboard.gateway';
-import { TunnelService } from './tunnel.service';
+import { TunnelService } from './tunnel/tunnel.service';
 import { ServiceModule } from './service/service.module';
 import { NotifyModule } from './notify/notify.module';
 import { TunnelModule } from './tunnel/tunnel.module';
