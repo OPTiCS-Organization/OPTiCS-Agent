@@ -17,6 +17,7 @@ import { NotifyGateway } from '../notify/notify.gateway';
 import { ConfigService } from '@nestjs/config';
 import { ReverseTunnelService } from './reverse-tunnel.service';
 import { SystemMetricsUtility } from '../utility/systemMetric.util';
+import { createSocketEmitter, type HubEmitter } from '../utility/createSocketEmitter.util';
 import { SshTerminalService } from '../terminal/ssh-terminal.service';
 import { ContainerLifeCycleService } from '../docker/container-lifecycle.service';
 import { RegisterPayload } from '../interfaces/register-payload.interface';
@@ -54,6 +55,22 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
   private socket!: Socket;
   private agentUuid: string | null = null;
   private hubUrl: string;
+
+  /**
+   * Hub가 발급한 HMAC 서명 비밀. 등록 전이거나 아직 발급받지 못했으면 null이다.
+   *
+   * 로컬 DB가 진실이지만 emit마다 조회하면 매 로그 한 줄에 쿼리가 하나씩 붙으므로
+   * 메모리에 들고 있다가 register 응답에서 재발급될 때만 갱신한다.
+   */
+  private signingSecret: string | null = null;
+
+  /**
+   * Hub로 나가는 유일한 발신 통로. 페이로드에 서명을 자동으로 붙인다.
+   *
+   * `this.socket.emit`을 직접 쓰면 서명이 빠진 이벤트가 생기고, 그런 통로가 하나라도
+   * 있으면 Hub가 미서명 이벤트를 계속 허용해야 해서 서명 도입이 무의미해진다.
+   */
+  private emitToHub!: HubEmitter;
 
   constructor(
     private readonly serviceLifecycleService: ServiceLifecycleService,
@@ -101,7 +118,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     const timestamp = payload.timestamp ?? new Date().toISOString();
     const meta = this.logMeta(payload);
     if (forwardToHub) {
-      this.socket.emit('service-log', { serviceIndex, log: payload.log, timestamp, ...meta });
+      this.emitToHub('service-log', { serviceIndex, log: payload.log, timestamp, ...meta });
     }
     log(`[TunnelService] {{ blue : bold : EVENT:LOG }}\n  Service Index : ${serviceIndex}\n  Timestamp     : ${timestamp}\n  Source        : ${payload.source ?? '-'}\n  Stream        : ${payload.stream ?? '-'}\n  Container     : ${payload.containerName ?? payload.composeService ?? '-'}\n  Log           : ${payload.log}`);
     this.serviceGateway.pushLog(serviceIndex, payload.log, timestamp, meta);
@@ -112,6 +129,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     this.agentUuid = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-uuid' } }).then(result => result?.value ?? null)
     log(`[Tunnel Service] {{ yellow : bold : UUID${this.agentUuid ? `_FOUND}}:{{ dim : italic : ${this.agentUuid} }}` : "_NOT_FOUND}}"}`);
 
+    /* 이전 등록에서 받아둔 서명 비밀이 있는지 조회 */
+    this.signingSecret = await this.prismaService.agentInfo.findUnique({ where: { key: 'agent-signing-secret' } }).then(result => result?.value ?? null)
+    log(`[Tunnel Service] {{ yellow : bold : SIGNING_SECRET_${this.signingSecret ? 'FOUND' : 'NOT_FOUND'} }}`);
+
     log(`[Tunnel Service] Connecting to Hub: ${this.hubUrl}`)
     this.socket = io(`${this.hubUrl}/agent`, {
       reconnection: true,
@@ -120,10 +141,18 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     });
 
     /**
+     * 비밀을 값이 아니라 콜백으로 넘긴다.
+     *
+     * 여기는 register 응답을 받기 전이라 최초 실행에서는 비밀이 null이다.
+     * 값을 굳혀 넘기면 발급 이후에도 계속 null인 채로 서명 없이 나간다.
+     */
+    this.emitToHub = createSocketEmitter(this.socket, () => this.signingSecret);
+
+    /**
      * 서비스 라이프사이클 코드가 소켓 객체를 직접 몰라도 Hub에 emit할 수 있게 연결
      */
     (this.serviceLifecycleService.registerHubEmit as (fn: (event: string, payload: object) => void) => void)((event, payload) => {
-      this.socket.emit(event, payload);
+      this.emitToHub(event, payload);
     });
 
     /**
@@ -133,7 +162,8 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     this.socket.on('connect', () => {
       log(`[Tunnel Service] Connection established with Hub.`);
       log(`[Tunnel Service] Sending registration information. (Protocol v${PROTOCOL_VERSION})`);
-      this.socket.emit('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: PROTOCOL_VERSION, _sig: null });
+      /* _sig는 emitToHub가 붙인다. 최초 등록처럼 비밀이 없으면 서명 없이 나간다. */
+      this.emitToHub('register', { agentUuid: this.agentUuid ?? null, agentVersion: AGENT_VERSION, protocolVersion: PROTOCOL_VERSION });
     });
     /*
       허브에서 전송받은 UUID가 NULL이면 새 UUID, Code를 발급해서 register 이벤트를 발생시킴.
@@ -153,13 +183,19 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           log(`[Tunnel Service] {{ yellow : bold : REGISTER:UUID_UPDATED }}\n  updated uuid: ${this.agentUuid}`);
         }
 
+        /**
+         * 비밀은 신규 발급 시에만 응답에 실린다. 기존 Agent의 재등록 응답은
+         * signingSecret이 null이므로, 그때 덮어쓰면 들고 있던 비밀을 지우게 된다.
+         */
         if (payload.data.signingSecret) {
+          this.signingSecret = payload.data.signingSecret;
           await this.prismaService.agentInfo.upsert({
             where: { key: 'agent-signing-secret' },
             create: { key: 'agent-signing-secret', value: payload.data.signingSecret },
             update: { value: payload.data.signingSecret }
           });
-          log(`[Tunnel Service] {{ yellow : bold : REGISTER:SIGNING_SECRET_SAVED}}\n  saved code: ${payload.data.signingSecret}`)
+          /* 비밀 자체는 로그에 남기지 않는다. 로그를 읽을 수 있는 사람이 곧 서명할 수 있는 사람이 된다. */
+          log(`[Tunnel Service] {{ yellow : bold : REGISTER:SIGNING_SECRET_SAVED }}`)
         }
 
         await this.prismaService.agentInfo.upsert({
@@ -191,7 +227,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.socket.on('system-metrics-request', (payload: { requestId: string }) => {
-      this.socket.emit('system-metrics', {
+      this.emitToHub('system-metrics', {
         requestId: payload.requestId,
         metrics: this.systemMetricsUtility.getCurrentMetrics(),
       });
@@ -202,9 +238,9 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
         payload.sessionId,
         { cols: payload.cols, rows: payload.rows },
         {
-          onReady: () => this.socket.emit('terminal-ready', { sessionId: payload.sessionId }),
-          onData: (data) => this.socket.emit('terminal-output', { sessionId: payload.sessionId, data }),
-          onClose: (reason) => this.socket.emit('terminal-closed', { sessionId: payload.sessionId, reason }),
+          onReady: () => this.emitToHub('terminal-ready', { sessionId: payload.sessionId }),
+          onData: (data) => this.emitToHub('terminal-output', { sessionId: payload.sessionId, data }),
+          onClose: (reason) => this.emitToHub('terminal-closed', { sessionId: payload.sessionId, reason }),
         },
       );
     });
@@ -246,7 +282,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               env: payload.env,
             },
             (event: string, emitPayload: unknown) => {
-              this.socket.emit(event, emitPayload);
+              this.emitToHub(event, emitPayload);
               const p = emitPayload as ServiceLogPayload & { serviceIndex: number; status?: string; containers?: unknown };
               const idx: number = p.serviceIndex;
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -279,7 +315,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               env: payload.env,
             },
             (event: string, emitPayload: unknown) => {
-              this.socket.emit(event, emitPayload);
+              this.emitToHub(event, emitPayload);
               const p = emitPayload as ServiceLogPayload & { serviceIndex: number; status?: string; containers?: unknown };
               const idx: number = p.serviceIndex;
               if (event === 'service-status' && typeof p.status === 'string') {
@@ -305,7 +341,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: startIdx, status: p.status });
+                this.emitToHub(event, { serviceIndex: startIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${startIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(startIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(startIdx, p.status);
@@ -329,7 +365,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: stopIdx, status: p.status });
+                this.emitToHub(event, { serviceIndex: stopIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${stopIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(stopIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(stopIdx, p.status);
@@ -355,7 +391,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: serviceIdx, status: p.status });
+                this.emitToHub(event, { serviceIndex: serviceIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${serviceIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(serviceIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(serviceIdx, p.status);
@@ -381,7 +417,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: serviceIdx, status: p.status });
+                this.emitToHub(event, { serviceIndex: serviceIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${serviceIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(serviceIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(serviceIdx, p.status);
@@ -407,7 +443,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: serviceIdx, status: p.status });
+                this.emitToHub(event, { serviceIndex: serviceIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${serviceIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(serviceIdx, p.status);
                 void this.serviceLifecycleService.updateServiceStatus(serviceIdx, p.status);
@@ -435,7 +471,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             (event: string, emitPayload: unknown) => {
               const p = emitPayload as ServiceLogPayload & { status?: string };
               if (event === 'service-status' && typeof p.status === 'string') {
-                this.socket.emit(event, { serviceIndex: deleteIdx, status: p.status });
+                this.emitToHub(event, { serviceIndex: deleteIdx, status: p.status });
                 log(`[TunnelService] {{ cyan : bold : EVENT:STATUS }}\n  Service Index : ${deleteIdx}\n  Status        : ${p.status}`);
                 this.serviceGateway.pushStatus(deleteIdx, p.status);
               } else if (event === 'service-log') {
@@ -456,10 +492,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           const { serviceIndex: streamIdx, serviceName: streamName, deployPreset } = commandPayload;
           const snapshot = this.serviceLifecycleService.getContainerSnapshot(streamIdx);
           if (snapshot) {
-            this.socket.emit('container-status', snapshot);
+            this.emitToHub('container-status', snapshot);
           }
           const markers = await this.serviceLifecycleService.loadRecentSessionMarkers(streamIdx);
-          this.socket.emit('service-log-markers', { serviceIndex: streamIdx, markers });
+          this.emitToHub('service-log-markers', { serviceIndex: streamIdx, markers });
           await this.serviceLifecycleService.streamServiceLog(
             streamIdx,
             streamName,
@@ -476,10 +512,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
               });
             },
             (progress) => {
-              this.socket.emit('log-load-progress', { serviceIndex: streamIdx, ...progress });
+              this.emitToHub('log-load-progress', { serviceIndex: streamIdx, ...progress });
             },
             (entries) => {
-              this.socket.emit('service-log-history', {
+              this.emitToHub('service-log-history', {
                 serviceIndex: streamIdx,
                 logs: entries,
                 hasMore: true,
@@ -503,7 +539,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             payload.before,
             Number(payload.limit ?? 1000),
           );
-          this.socket.emit('service-log-history', {
+          this.emitToHub('service-log-history', {
             serviceIndex: historyIdx,
             before: payload.before,
             logs,
@@ -521,7 +557,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
             serviceName,
             deployPreset,
           );
-          this.socket.emit('container-status', snapshot);
+          this.emitToHub('container-status', snapshot);
           break;
         }
         case COMMAND.STOP_LOG: {
@@ -532,7 +568,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       }
 
       log(`[TunnelService] {{ green : bold : CMD:DONE }}\n  Command       : ${payload.command}\n  Service Index : ${payload.serviceIndex ?? '-'}\n  Service Name  : ${payload.serviceName ?? '-'}\n  Preset        : ${payload.deployPreset ?? '-'}`);
-      this.socket.emit('response', response);
+      this.emitToHub('response', response);
     });
 
     this.socket.on('connect-request', async (payload: ConnectRequestPayload) => {
@@ -544,7 +580,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     this.socket.on('reverse-proxy', async (payload: RouteRequest) => {
       log(`[TunnelService] {{ magenta : bold : REVERSE_PROXY:REQUEST }}\n  Target Service : ${payload.targetServiceName}\n  Path           : ${payload.path}`);
       const response = await this.serviceLifecycleService.fetchJSON(payload);
-      this.socket.emit('response', response);
+      this.emitToHub('response', response);
     });
 
     this.socket.on('tunnel-connect', (payload: { token: string, service_port: number, tunnel_port: number }) => {
@@ -555,10 +591,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
     this.socket.on('update-agent', (payload: { version: string }) => {
       log(`[TunnelService] {{ yellow : bold : UPDATE:REQUESTED }}\n  Target Version : ${payload.version}`);
       this.appService.updateAgent(payload.version, {
-        progress: (line) => this.socket.emit('update-log', { line }),
-        failed: (message) => this.socket.emit('update-failed', { message }),
+        progress: (line) => this.emitToHub('update-log', { line }),
+        failed: (message) => this.emitToHub('update-failed', { message }),
       }).catch((error: unknown) => {
-        this.socket.emit('update-failed', { message: String(error) });
+        this.emitToHub('update-failed', { message: String(error) });
         log(`[TunnelService] {{ red : bold : UPDATE:FAILED }}\n  ${String(error)}`);
       });
     });
