@@ -20,7 +20,7 @@ import { ReplayGuard, verify } from './hash.util';
 /** 검증을 거쳐 리스너를 등록하는 함수. `socket.on`을 대체한다. */
 export type HubListener = <T = unknown>(event: string, handler: (payload: T) => void | Promise<void>) => void;
 
-export type SigningSecretReader = () => string | null | undefined;
+type SigningSecretReader = () => string | null | undefined;
 
 /**
  * 서명 검증 없이 등록되는 이벤트.
