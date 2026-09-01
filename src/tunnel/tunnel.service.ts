@@ -209,8 +209,10 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
         });
         log(`[Tunnel Service] {{ yellow : bold : REGISTER:IP_UPDATED }}\n  updated ip: ${payload.data.ip}`);
 
-
         log(`[Tunnel Service] {{ green : bold : REGISTER:SYNCED }}\n  Successfully saved connection informations.`);
+
+        log(`[Tunnel Service] {{ cyan : bold : PRECONN:INITIALIZING }}`)
+        this.reverseTunnelService.initPreconnectPool(this.agentUuid, () => this.signingSecret);
       }
 
       /**
@@ -610,12 +612,14 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       log(`[TunnelService] {{ cyan : bold : CONNECT_REQUEST:RECEIVED }}\n  Workspace       : ${request.workspaceName}\n  Workspace Index : ${request.workspaceIndex}`);
     });
 
+    // 이 함수는 현재 Hub 버전에서 어떠한 경우에도 사용되지 않음.
     this.onFromHub('reverse-proxy', async (payload: RouteRequest) => {
       log(`[TunnelService] {{ magenta : bold : REVERSE_PROXY:REQUEST }}\n  Target Service : ${payload.targetServiceName}\n  Path           : ${payload.path}`);
       const response = await this.serviceLifecycleService.fetchJSON(payload);
       this.emitToHub('response', response);
     });
 
+    // RTS에서 Preconnect 관련 로직을 넣으면 될 듯.
     this.onFromHub('tunnel-connect', (payload: { token: string, service_port: number, tunnel_port: number }) => {
       this.reverseTunnelService.open({ servicePort: payload.service_port, token: payload.token, tunnelPort: payload.tunnel_port })
     });

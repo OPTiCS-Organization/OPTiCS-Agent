@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { DeployService } from './deploy.service';
 import { BuildWorkspaceService } from './build-workspace.service';
 import { ContainerLifeCycleService } from './container-lifecycle.service';
@@ -12,7 +11,6 @@ import { DockerCli } from './docker-cli.service';
 import { SelfInspectService } from './self-inspect.service';
 
 @Module({
-  imports: [ConfigModule],
   providers: [
     DockerCli,
     SelfInspectService,
