@@ -211,7 +211,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
 
         log(`[Tunnel Service] {{ green : bold : REGISTER:SYNCED }}\n  Successfully saved connection informations.`);
 
-        log(`[Tunnel Service] {{ cyan : bold : PRECONN:INITIALIZING }} ${this.signingSecret}`)
+        log(`[Tunnel Service] {{ cyan : bold : PRECONN:INITIALIZING }}`)
         this.reverseTunnelService.initPreconnectPool(this.agentUuid, () => this.signingSecret);
       }
 
