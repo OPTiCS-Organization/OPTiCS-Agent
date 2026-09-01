@@ -42,13 +42,30 @@ agent_running() {
   [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)" = "true" ]
 }
 
+settle_and_check() {
+  log "waiting ${HEALTH_WAIT}s for $1 to settle"
+  sleep "$HEALTH_WAIT"
+  agent_running
+}
+
+# 0. 마운트된 디렉터리가 실제 compose 프로젝트인지 먼저 확인한다.
+if ! docker compose config -q >/dev/null 2>&1; then
+  log "ERROR: no compose project at $(pwd), nothing changed"
+  exit 1
+fi
+
 PREVIOUS_TAG=$(read_tag)
 log "current=${PREVIOUS_TAG} target=${TARGET_TAG}"
 
 rollback() {
   log "ERROR: rolling back to ${PREVIOUS_TAG}"
-  write_tag "$PREVIOUS_TAG"
-  docker compose up -d || log "ERROR: rollback failed, manual recovery required"
+  # .env 복원이 실패해도 컨테이너 복구는 시도해야 하므로 set -e로 여기서 멈추지 않게 막는다.
+  write_tag "$PREVIOUS_TAG" || log "ERROR: could not restore ${TAG_KEY}, trying compose anyway"
+  if docker compose up -d "$AGENT_SERVICE" && settle_and_check "$PREVIOUS_TAG"; then
+    log "rolled back to ${PREVIOUS_TAG}"
+  else
+    log "ERROR: rollback failed, manual recovery required"
+  fi
   exit 1
 }
 
@@ -62,9 +79,11 @@ if ! docker pull "${AGENT_IMAGE}:${TARGET_TAG}"; then
 fi
 
 # 2. 태그를 고정하고 교체한다. 여기서부터는 되돌릴 것이 생긴다.
+#    교체 대상은 Agent 서비스뿐이다. 프로젝트 전체를 올리면 Dashboard처럼 이 업데이트와 무관한
+#    서비스가 못 뜨는 것만으로 롤백이 돌아, 멀쩡한 Agent를 되돌리게 된다.
 write_tag "$TARGET_TAG"
 log "recreating ${AGENT_SERVICE}"
-if ! docker compose up -d; then
+if ! docker compose up -d "$AGENT_SERVICE"; then
   log "ERROR: compose up failed"
   rollback
 fi
@@ -72,10 +91,7 @@ fi
 # 3. 새 Agent가 실제로 버티는지 확인한다.
 #    부팅 직후 죽는 이미지를 성공으로 처리하면 Agent가 영영 돌아오지 않고,
 #    그때는 이 컨테이너의 로그가 사용자에게 남는 유일한 단서가 된다.
-log "waiting ${HEALTH_WAIT}s for ${TARGET_TAG} to settle"
-sleep "$HEALTH_WAIT"
-
-if ! agent_running; then
+if ! settle_and_check "$TARGET_TAG"; then
   log "ERROR: ${TARGET_TAG} did not stay up"
   rollback
 fi

@@ -13,6 +13,14 @@ export type ComposeProject = {
 };
 
 /**
+ * 0.7.0 이하의 업데이터가 compose 프로젝트를 마운트하던 컨테이너 내부 경로.
+ *
+ * 지금 업데이터는 호스트와 같은 경로에 마운트해 오염을 만들지 않지만(app.service.ts),
+ * 이미 라벨이 덮인 설치본이 현장에 남아 있으므로 이 값을 만나면 복구를 시도한다.
+ */
+const LEGACY_UPDATER_MOUNT = '/project';
+
+/**
  * Agent가 자기 자신이 어떻게 기동됐는지 도커 소켓으로 되짚어보는 서비스.
  *
  * 자기 교체를 하려면 compose 프로젝트의 "호스트 측" 경로가 필요한데,
@@ -52,6 +60,38 @@ export class SelfInspectService {
         'Agent가 docker compose로 기동되지 않아 자동 업데이트를 사용할 수 없다. 설치 스크립트로 다시 설치해야 한다.',
       );
     }
-    return { project, workingDir, service };
+
+    if (workingDir !== LEGACY_UPDATER_MOUNT) {
+      return { project, workingDir, service };
+    }
+
+    const recovered = await this.workingDirFromSiblings(project);
+    if (!recovered) {
+      throw new Error(
+        `compose 프로젝트 경로가 구버전 업데이터에 ${LEGACY_UPDATER_MOUNT}로 덮여 있고 되찾을 단서도 없다. ` +
+        '호스트에서 설치 디렉터리로 이동해 `docker compose up -d`를 한 번 실행하면 경로가 복구된다.',
+      );
+    }
+    return { project, workingDir: recovered, service };
+  }
+
+  /**
+   * 라벨이 덮인 경우 같은 compose 프로젝트의 다른 컨테이너에서 호스트 경로를 되찾는다.
+   *
+   * 업데이터는 Agent 서비스만 교체하고 나머지 서비스는 이미지가 그대로라 재생성하지 않는다.
+   * 그래서 Dashboard처럼 함께 설치된 컨테이너는 설치 당시의 호스트 경로를 아직 들고 있다.
+   * 프로젝트 전체가 교체된 적이 있다면 되찾을 값이 없고, 그때는 호출부가 수동 복구를 안내한다.
+   */
+  private async workingDirFromSiblings(project: string): Promise<string | undefined> {
+    const containers = await this.docker.listContainers({
+      all: true,
+      filters: { label: [`com.docker.compose.project=${project}`] },
+    });
+
+    for (const container of containers) {
+      const candidate = container.Labels?.['com.docker.compose.project.working_dir'];
+      if (candidate && candidate !== LEGACY_UPDATER_MOUNT) return candidate;
+    }
+    return undefined;
   }
 }

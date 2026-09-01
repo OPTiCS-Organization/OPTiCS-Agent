@@ -128,12 +128,17 @@ export class AppService {
     // Agent가 죽은 채 돌아오지 않았다면 그 로그가 사용자에게 남는 유일한 단서다.
     this.dockerCli.runSync(['rm', '-f', UPDATER_CONTAINER]);
 
+    // 프로젝트는 반드시 "호스트와 같은 경로"에 마운트한다.
+    // compose는 자기가 실행된 디렉터리를 working_dir 라벨에 그대로 박으므로, 여기서 /project 같은
+    // 컨테이너 전용 경로를 쓰면 교체된 Agent의 라벨이 그 경로로 덮여 다음 업데이트가 존재하지 않는
+    // 호스트 경로를 마운트하게 된다(원격 업데이트가 설치당 한 번만 되던 원인).
+    // 양쪽 경로를 같게 두면 컨테이너 안에서 찍은 라벨이 호스트에서도 그대로 유효하다.
     const result = this.dockerCli.runSync([
       'run', '-d',
       '--name', UPDATER_CONTAINER,
       '-v', '/var/run/docker.sock:/var/run/docker.sock',
-      '-v', `${workingDir}:/project`,
-      '-w', '/project',
+      '-v', `${workingDir}:${workingDir}`,
+      '-w', workingDir,
       '-e', `AGENT_IMAGE=${agentImage}`,
       '-e', `TARGET_TAG=${version}`,
       '-e', `AGENT_SERVICE=${service}`,
