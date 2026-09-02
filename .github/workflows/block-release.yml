@@ -56,4 +56,4 @@ jobs:
           else
             echo "::notice::Unblocked ${TAG}"
           fi
-          echo "Hub는 최대 15분 뒤 동기화에서 반영한다. 즉시 반영하려면 POST /v1/release/agent/sync 를 호출한다."
+          echo "Hub는 1분 주기 동기화에서 반영한다. 즉시 반영하려면 POST /v1/release/agent/sync 를 호출한다."
