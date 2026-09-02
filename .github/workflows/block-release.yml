@@ -1,0 +1,59 @@
+name: Block Agent Release
+
+# 문제가 확인된 버전의 설치를 막는다.
+#
+# Hub의 운영자 API(POST /v1/release/agent/:version/block)가 더 빠르지만, 그 차단은 Hub의 DB에만
+# 남는다. 여기서 거는 차단은 릴리즈 자산에 남으므로 DB를 갈아엎어도 살아남고, 릴리즈를 보는
+# 사람에게도 상태가 그대로 보인다. 오래 유지할 차단은 이쪽으로 옮겨 둔다.
+#
+# 릴리즈를 삭제하지 않는 이유는 그대로다. 지우면 패치노트와 이력까지 사라지고,
+# 이미 그 버전을 돌리는 Agent에게 아무 설명도 남지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "릴리즈 태그 (예: v0.7.2)"
+        required: true
+      reason:
+        description: "차단 사유. 사용자에게 그대로 표시된다. 비우면 차단을 해제한다."
+        required: false
+
+jobs:
+  block:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Rewrite Release Metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag }}
+          REASON: ${{ github.event.inputs.reason }}
+        run: |
+          # 기존 자산을 그대로 받아 blocked만 갈아끼운다. version/protocol/image를 여기서 다시
+          # 만들면 릴리즈 시점의 package.json이 아니라 기본 브랜치 값이 박혀 태그와 어긋난다.
+          gh release download "$TAG" --pattern release.json --output release.json --clobber
+
+          if [ -n "$REASON" ]; then
+            jq --arg reason "$REASON" '.blocked = $reason' release.json > updated.json
+          else
+            jq 'del(.blocked)' release.json > updated.json
+          fi
+
+          mv updated.json release.json
+          cat release.json
+          gh release upload "$TAG" release.json --clobber
+
+      - name: Report
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+          REASON: ${{ github.event.inputs.reason }}
+        run: |
+          if [ -n "$REASON" ]; then
+            echo "::notice::Blocked ${TAG}: ${REASON}"
+          else
+            echo "::notice::Unblocked ${TAG}"
+          fi
+          echo "Hub는 1분 주기 동기화에서 반영한다. 즉시 반영하려면 POST /v1/release/agent/sync 를 호출한다."

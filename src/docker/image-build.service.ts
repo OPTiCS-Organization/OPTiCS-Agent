@@ -16,9 +16,6 @@ export class ImageBuildService {
   ) {
     this.docker = new Docker({
       socketPath: '/var/run/docker.sock'
-      // For Remote Docker Connection
-      // host: this.configService.getOrThrow<string>('REMOTE_DOCKER_HOST'),
-      // port: this.configService.getOrThrow<number>('REMOTE_DOCKER_PORT')
     });
   }
 

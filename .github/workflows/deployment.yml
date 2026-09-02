@@ -5,7 +5,38 @@ on:
     types: [published]
 
 jobs:
+  # 이미지 태그는 git 태그에서, release.json의 버전은 package.json에서 나온다.
+  # 둘이 어긋나면 카탈로그에는 올라오는데 pull은 실패하는 버전이 생기고,
+  # 나중에 같은 번호로 정식 릴리즈를 내면 그 행을 덮어써 프리릴리즈가 정식으로 둔갑한다.
+  # 프리릴리즈에서 특히 밟기 쉬우므로(태그만 -rc를 붙이고 package.json은 그대로 두기 쉽다)
+  # 이미지가 푸시되기 전인 여기서 막는다.
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Verify Release Tag Matches package.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::Release tag '${TAG}' does not match package.json version '${VERSION}'."
+            exit 1
+          fi
+
+          # 프로토콜이 없거나 숫자가 아니면 Hub가 release.json을 버린다. 그러면 워크플로는
+          # 초록불인데 Console에는 이 버전이 영영 보이지 않는다. 조용히 사라지느니 여기서 죽는다.
+          if ! jq -e '.optics.protocol | type == "number"' package.json > /dev/null; then
+            echo "::error::package.json has no numeric optics.protocol."
+            exit 1
+          fi
+
+          echo "Release ${TAG} matches package.json ${VERSION}."
+
   build:
+    needs: verify
     strategy:
       fail-fast: false
       matrix:
