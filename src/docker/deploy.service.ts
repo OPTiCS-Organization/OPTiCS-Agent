@@ -12,6 +12,7 @@ import { ExpectedServicesCallback } from "./types/ExpectedServicesCallback";
 import { DeployOptions } from "./types/DeployOptions.type";
 import { ServiceStatus } from "./types/ServiceStatus.type";
 import { primaryRootDirectory, resolvePortMappings } from "./utility/deploy-command.util";
+import { toDockerName } from "./utility/docker-name.util";
 import { createServiceLogEmitter, createServiceStatusEmitter } from "./utility/emitters";
 
 @Injectable()
@@ -31,7 +32,7 @@ export class DeployService {
   // 배포 한 건의 전체 순서를 지휘한다: 정리 -> 클론 -> 빌드 -> 기동.
   // 실제 작업은 워크스페이스/compose/이미지 서비스가 맡고 여기서는 상태와 로그만 관리한다.
   async deploy(data: DeployCommand, emit: HubEmit, deployOptions?: DeployOptions, onExpectedServices?: ExpectedServicesCallback) {
-    const serviceName = data.serviceName.toLowerCase();
+    const serviceName = toDockerName(data.serviceName);
     const { sendLog } = createServiceLogEmitter(emit, {
       serviceIndex: data.serviceIndex,
       containerName: serviceName,
@@ -122,7 +123,7 @@ export class DeployService {
     sendLog('Build done. Starting container...');
     sendStatus(ServiceStatus.STARTING);
     await this.imageBuildService.runContainer(
-      data.serviceName,
+      serviceName,
       data.serviceVersion,
       resolvePortMappings(data),
       data.env,

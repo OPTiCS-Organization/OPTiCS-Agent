@@ -4,6 +4,7 @@ import Docker from "dockerode";
 import fs from "fs";
 import log from "spectra-log";
 import { ServicePortMapping } from "src/global/types/Command.dto";
+import { toDockerName } from "./utility/docker-name.util";
 
 type BuildEvent = { stream?: string; error?: string };
 
@@ -64,8 +65,8 @@ export class ImageBuildService {
     }
 
     const container = await this.docker.createContainer({
-      Image: `${serviceName.toLowerCase()}:${serviceVersion}`,
-      name: serviceName.toLowerCase(),
+      Image: `${toDockerName(serviceName)}:${serviceVersion}`,
+      name: toDockerName(serviceName),
       Env: env ? Object.entries(env).map(([k, v]) => `${k}=${v}`) : undefined,
       ExposedPorts: exposedPorts,
       HostConfig: {
@@ -83,7 +84,7 @@ export class ImageBuildService {
   // 재배포 시 이름 충돌을 없애기 위한 사전 정리다.
   async removeExistingContainer(serviceName: string, sendLog: (line: string) => void): Promise<void> {
     try {
-      const existing = this.docker.getContainer(serviceName);
+      const existing = this.docker.getContainer(toDockerName(serviceName));
       const info = await existing.inspect() as { State: { Running: boolean } };
       if (info.State.Running) {
         sendLog(`Stopping existing container '${serviceName}'...`);
