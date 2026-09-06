@@ -13,6 +13,7 @@ import { DockerLogEntry } from 'src/docker/types/DockerLogEntry.type';
 import { ContainerLifeCycleService } from 'src/docker/container-lifecycle.service';
 import { DeployService } from 'src/docker/deploy.service';
 import { HubEmit } from 'src/docker/types/HubEmit.type';
+import { toDockerName } from 'src/docker/utility/docker-name.util';
 
 export interface ContainerState {
   name: string;
@@ -139,7 +140,7 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   private containerBelongsToService(containerName: string, serviceName: string) {
-    const normalized = serviceName.toLowerCase();
+    const normalized = toDockerName(serviceName);
     return containerName === normalized || containerName.startsWith(`${normalized}-`);
   }
 
@@ -171,16 +172,16 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   emitExpectedContainers(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, services: string[]) {
-    this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
+    this.trackedServices.set(serviceIndex, { serviceName: toDockerName(serviceName), deployPreset });
     const containers = services.length > 0
       ? services.map(service => ({ name: service, service, status: 'building' as ContainerStatus }))
-      : [{ name: serviceName.toLowerCase(), status: 'building' as ContainerStatus }];
+      : [{ name: toDockerName(serviceName), status: 'building' as ContainerStatus }];
     this.emitSnapshot(this.snapshotFromContainers(serviceIndex, containers));
   }
 
   async syncContainerStatus(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION, fallback: ContainerStatus = 'stopped') {
-    this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
-    const containers = await this.containerInspectService.getContainerSnapshot(serviceName.toLowerCase(), deployPreset);
+    this.trackedServices.set(serviceIndex, { serviceName: toDockerName(serviceName), deployPreset });
+    const containers = await this.containerInspectService.getContainerSnapshot(toDockerName(serviceName), deployPreset);
     const snapshot = this.snapshotFromContainers(serviceIndex, containers);
     this.emitSnapshot(snapshot);
     if (containers.length > 0 || fallback === 'removed') {
@@ -194,8 +195,8 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   initContainerStates(serviceIndex: number, serviceName: string, deployPreset: DEPLOY_OPTION) {
-    this.trackedServices.set(serviceIndex, { serviceName: serviceName.toLowerCase(), deployPreset });
-    const snapshot = this.snapshotFromContainers(serviceIndex, [{ name: serviceName.toLowerCase(), status: 'building' }]);
+    this.trackedServices.set(serviceIndex, { serviceName: toDockerName(serviceName), deployPreset });
+    const snapshot = this.snapshotFromContainers(serviceIndex, [{ name: toDockerName(serviceName), status: 'building' }]);
     this.emitSnapshot(snapshot);
   }
 
@@ -256,11 +257,11 @@ export class ServiceLifecycleService implements OnModuleInit {
     onHistory?: (entries: DockerLogEntry[]) => void,
   ): Promise<void> {
     log(`[ServiceLifecycleService] streamServiceLog | serviceIndex=${serviceIndex} | name=${serviceName}`);
-    await this.dockerLogService.streamContainerLog(serviceName.toLowerCase(), deployPreset, onLog, onProgress, onHistory);
+    await this.dockerLogService.streamContainerLog(toDockerName(serviceName), deployPreset, onLog, onProgress, onHistory);
   }
 
   loadOlderServiceLogs(serviceName: string, deployPreset: DEPLOY_OPTION, before: string, limit?: number): DockerLogEntry[] {
-    return this.dockerLogService.loadOlderContainerLogs(serviceName.toLowerCase(), deployPreset, before, limit);
+    return this.dockerLogService.loadOlderContainerLogs(toDockerName(serviceName), deployPreset, before, limit);
   }
 
   async loadRecentSessionMarkers(serviceIndex: number, limit = 1000): Promise<ServiceLogSessionMarker[]> {
@@ -299,7 +300,7 @@ export class ServiceLifecycleService implements OnModuleInit {
   }
 
   stopServiceLog(serviceName: string): void {
-    this.dockerLogService.stopContainerLog(serviceName.toLowerCase());
+    this.dockerLogService.stopContainerLog(toDockerName(serviceName));
   }
 
   async v1DeleteService(

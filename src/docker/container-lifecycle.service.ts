@@ -9,6 +9,7 @@ import { DockerCli } from "./docker-cli.service";
 import { createServiceLogEmitter, createServiceStatusEmitter } from "./utility/emitters";
 import { HubEmit } from "./types/HubEmit.type";
 import { ServiceStatus } from "./types/ServiceStatus.type";
+import { toDockerName } from "./utility/docker-name.util";
 
 @Injectable()
 export class ContainerLifeCycleService {
@@ -32,27 +33,28 @@ export class ContainerLifeCycleService {
     deployPreset: DEPLOY_OPTION,
     emit: HubEmit,
   ) {
-    const { sendLog } = createServiceLogEmitter(emit, { serviceIndex, containerName: serviceName, stream: 'lifecycle' })
+    const si = toDockerName(serviceName);
+    const { sendLog } = createServiceLogEmitter(emit, { serviceIndex, containerName: si, stream: 'lifecycle' })
     const { sendStatus } = createServiceStatusEmitter(emit, { serviceIndex });
     const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
 
     try {
-      sendLog(`Stopping service '${serviceName}'...`);
+      sendLog(`Stopping service '${si}'...`);
       if (isCompose) {
-        await this.dockerCli.run(['compose', '-p', serviceName, 'stop'], {
+        await this.dockerCli.run(['compose', '-p', si, 'stop'], {
           label: 'docker compose stop',
           onLine: sendLog,
         });
       } else {
-        await this.docker.getContainer(serviceName).stop();
+        await this.docker.getContainer(si).stop();
       }
       sendStatus(ServiceStatus.STOPPED);
-      sendLog(`Service '${serviceName}' stopped successfully.`);
-      log(`[DockerService] stopService success | name=${serviceName}`);
+      sendLog(`Service '${si}' stopped successfully.`);
+      log(`[DockerService] stopService success | name=${si}`);
     } catch (e) {
       sendStatus('failed');
       sendLog(`ERROR: ${String(e)}`);
-      log(`[DockerService] stopService failed | name=${serviceName} | ${String(e)}`);
+      log(`[DockerService] stopService failed | name=${si} | ${String(e)}`);
     }
   }
 
@@ -100,7 +102,7 @@ export class ContainerLifeCycleService {
     deployPreset: DEPLOY_OPTION,
     emit: HubEmit,
   ) {
-    const si = serviceName.toLowerCase();
+    const si = toDockerName(serviceName);
     const { sendLog } = createServiceLogEmitter(emit, { serviceIndex, containerName: si, stream: 'lifecycle' });
     const { sendStatus } = createServiceStatusEmitter(emit, { serviceIndex });
     const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;
@@ -152,7 +154,7 @@ export class ContainerLifeCycleService {
     deleteScope: 'containers' | 'service',
     emit: HubEmit,
   ) {
-    const si = serviceName.toLowerCase();
+    const si = toDockerName(serviceName);
     const { sendLog } = createServiceLogEmitter(emit, { serviceIndex, containerName: si, stream: 'lifecycle' });
     const { sendStatus } = createServiceStatusEmitter(emit, { serviceIndex });
     const isCompose = (deployPreset.toUpperCase() as DEPLOY_OPTION) !== DEPLOY_OPTION.DOCKERFILE;

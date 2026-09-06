@@ -20,6 +20,7 @@ import { createSocketEmitter, type HubEmitter } from '../utility/createSocketEmi
 import { createSocketListener, type HubListener } from '../utility/createSocketListener.util';
 import { SshTerminalService } from '../terminal/ssh-terminal.service';
 import { ContainerLifeCycleService } from '../docker/container-lifecycle.service';
+import { toDockerName } from '../docker/utility/docker-name.util';
 import { RegisterPayload } from '../interfaces/register-payload.interface';
 
 type ServiceLogPayload = {
@@ -286,7 +287,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
       switch (payload.command) {
         case COMMAND.DEPLOY:
           await this.serviceLifecycleService.createServiceSessionMarker(payload.serviceIndex, payload.serviceName, 'service-deploy');
-          this.serviceLifecycleService.initContainerStates(payload.serviceIndex, payload.serviceName.toLowerCase(), payload.deployPreset);
+          this.serviceLifecycleService.initContainerStates(payload.serviceIndex, toDockerName(payload.serviceName), payload.deployPreset);
           response = await this.serviceLifecycleService.v1DeployService(
             {
               apiKey: '',
@@ -319,7 +320,7 @@ export class TunnelService implements OnModuleInit, OnModuleDestroy {
           break;
         case COMMAND.REDEPLOY:
           await this.serviceLifecycleService.createServiceSessionMarker(payload.serviceIndex, payload.serviceName, 'service-redeploy');
-          this.serviceLifecycleService.initContainerStates(payload.serviceIndex, payload.serviceName.toLowerCase(), payload.deployPreset);
+          this.serviceLifecycleService.initContainerStates(payload.serviceIndex, toDockerName(payload.serviceName), payload.deployPreset);
           response = await this.serviceLifecycleService.v1RedeployService(
             {
               apiKey: '',
